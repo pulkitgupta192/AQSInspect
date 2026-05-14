@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import SetupScreen from "./SetupScreen";
+import SettingsScreen from "./SettingsScreen";
 import "./styles.css";
+
 
 export default function App() {
   const [prUrl, setPrUrl] = useState("");
@@ -15,6 +18,44 @@ export default function App() {
 
   const [aiReview, setAiReview] = useState(null);
   const [aiLoading, setAiLoading] = useState(false);
+  
+  const [config, setConfig] = useState(null);
+  const [checkingConfig, setCheckingConfig] = useState(true);
+  
+  const [showSettings, setShowSettings] = useState(false);
+
+	useEffect(() => {
+	  (async () => {
+		const savedConfig = await window.config.get();
+		setConfig(savedConfig);
+		setCheckingConfig(false);
+	  })();
+	}, []);
+
+	if (checkingConfig) {
+	  return <div className="loading">Loading…</div>;
+	}
+
+	if (!config) {
+	  return <SetupScreen onSave={setConfig} />;
+	}
+
+	if (showSettings) {
+	  return (
+		<SettingsScreen
+		  config={config}
+		  onClose={() => setShowSettings(false)}
+		  onConfigUpdated={(newConfig) => {
+			setConfig(newConfig);
+			setShowSettings(false);
+		  }}
+		  onReset={() => {
+			setConfig(null);
+			setShowSettings(false);
+		  }}
+		/>
+	  );
+	}
 
   /* ---------------- Fetch PR Diff ---------------- */
   const fetchDiff = async () => {
@@ -35,7 +76,7 @@ export default function App() {
 
       const result = await window.api.fetchPullRequestDiff({
         prUrl,
-        token
+		token: config.token
       });
 
       setPrMeta(result.pr);
@@ -94,6 +135,10 @@ export default function App() {
             value={token}
             onChange={(e) => setToken(e.target.value)}
           />
+		  <button className="settings-btn" onClick={() => setShowSettings(true)}>
+			  ⚙ Settings
+		  </button>
+
           <button onClick={fetchDiff} disabled={loading}>
             {loading ? "Fetching…" : "Fetch Diff"}
           </button>
@@ -133,7 +178,11 @@ export default function App() {
         {/* Patch Viewer */}
         <section className="patch-viewer">
           {selectedFile ? (
-            <DiffPatch patch={selectedFile.patch} />
+            <DiffPatch
+				  patch={selectedFile.patch}
+				  filename={selectedFile.filename}
+				  findings={aiReview?.findings || []}
+				/>
           ) : (
             <div className="empty">Select a file to view its diff</div>
           )}
@@ -166,10 +215,14 @@ export default function App() {
 }
 
 /* ---------------- Patch Renderer ---------------- */
-function DiffPatch({ patch }) {
+function DiffPatch({ patch, filename, findings }) {
   if (!patch) {
     return <div className="empty">No diff available for this file</div>;
   }
+
+  const fileFindings = findings.filter(
+    (f) => f.filename === filename
+  );
 
   return (
     <pre className="patch">
@@ -179,12 +232,29 @@ function DiffPatch({ patch }) {
         else if (line.startsWith("-")) cls += " del";
         else if (line.startsWith("@@")) cls += " hunk";
 
+        const matchedFindings = fileFindings.filter(
+          (f) => f.matchText && line.includes(f.matchText)
+        );
+
         return (
           <div key={idx} className={cls}>
             {line}
+
+            {matchedFindings.map((f, i) => (
+              <InlineAnnotation key={i} finding={f} />
+            ))}
           </div>
         );
       })}
     </pre>
+  );
+}
+
+function InlineAnnotation({ finding }) {
+  return (
+    <div className={`inline-ai ${finding.severity}`}>
+      <strong>{finding.title}</strong>
+      <span>{finding.explanation}</span>
+    </div>
   );
 }

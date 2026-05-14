@@ -1,6 +1,21 @@
 const { ipcMain } = require("electron");
+const { saveConfig, loadConfig, clearConfig } = require("./configStore");
 
 ipcMain.handle("app:ping", async () => "pong from main");
+
+ipcMain.handle("config:get", async () => {
+  return await loadConfig();
+});
+
+ipcMain.handle("config:save", async (_, config) => {
+  await saveConfig(config);
+  return { ok: true };
+});
+
+ipcMain.handle("config:clear", async () => {
+  await clearConfig();
+  return { ok: true };
+});
 
 function parsePullRequestUrl(prUrl) {
   const u = new URL(prUrl);
@@ -172,13 +187,28 @@ ipcMain.handle("ai:review-pr", async (_, payload) => {
   }
 
   if (findings.length === 0) {
-    findings.push({
-      severity: "info",
-      title: "No major risks detected",
-      explanation:
-        "No obvious correctness, safety, or robustness issues were identified by static review."
-    });
+	findings.push({
+	  severity: "warning",
+	  title: "Referential integrity risk",
+	  explanation:
+		"Deleting from ORDERS without checking ORDER_ITEMS can break referential integrity.",
+	  filename: "Safe_Update_Bug-06.sql",
+	  matchText: "DELETE FROM orders"
+	});
   }
+
+	findings.push({
+	  severity: "critical",
+	  severityScore: 9,
+	  confidence: 92,
+	  title: "Missing ROLLBACK on failure",
+	  explanation:
+		"The exception handler logs the error but does not rollback the transaction, risking partial data corruption.",
+	  filename: "Safe_Update_Bug-06.sql",
+	  matchText: "EXCEPTION",
+	  rationale:
+		"Data modification statements are present before COMMIT, and the exception block lacks a rollback. This pattern reliably causes inconsistent state."
+	});
 
   return {
     ok: true,
@@ -186,3 +216,4 @@ ipcMain.handle("ai:review-pr", async (_, payload) => {
     findings
   };
 });
+

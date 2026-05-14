@@ -147,3 +147,72 @@ body {
   display: block;
   margin-bottom: 4px;
 }
+
+.inline-ai {
+  margin-left: 16px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  display: inline-block;
+  max-width: 600px;
+}
+
+.inline-ai.warning {
+  background: #fff8e1;
+  border-left: 4px solid #f9a825;
+}
+
+.inline-ai.critical {
+  background: #fdecea;
+  border-left: 4px solid #d32f2f;
+}
+
+.inline-ai.info {
+  background: #e3f2fd;
+  border-left: 4px solid #1976d2;
+}
+
+.inline-ai strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.settings-screen {
+  padding: 24px;
+  max-width: 600px;
+  margin: 40px auto;
+  background: #fff;
+}
+
+.settings-screen label {
+  display: block;
+  margin-top: 16px;
+  font-weight: 600;
+}
+
+.settings-screen input {
+  width: 100%;
+  padding: 8px;
+  margin-top: 6px;
+}
+
+.settings-actions {
+  margin-top: 24px;
+  display: flex;
+  gap: 12px;
+}
+
+.settings-actions .secondary {
+  background: #eee;
+}
+
+.settings-actions .danger {
+  background: #c62828;
+  color: #fff;
+}
+
+.settings-btn {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+}

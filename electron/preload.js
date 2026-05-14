@@ -18,3 +18,9 @@ contextBridge.exposeInMainWorld("api", {
     return ipcRenderer.invoke("github:fetch-pr-diff", payload);
   }
 });
+
+contextBridge.exposeInMainWorld("config", {
+  get: () => ipcRenderer.invoke("config:get"),
+  save: (config) => ipcRenderer.invoke("config:save", config),
+  clear: () => ipcRenderer.invoke("config:clear")
+});
