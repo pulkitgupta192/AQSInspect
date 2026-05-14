@@ -22,5 +22,6 @@ contextBridge.exposeInMainWorld("api", {
 contextBridge.exposeInMainWorld("config", {
   get: () => ipcRenderer.invoke("config:get"),
   save: (config) => ipcRenderer.invoke("config:save", config),
-  clear: () => ipcRenderer.invoke("config:clear")
+  clear: () => ipcRenderer.invoke("config:clear"),
+  verifyToken: (token) => ipcRenderer.invoke("config:verify-token", token),
 });

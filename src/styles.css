@@ -216,3 +216,13 @@ body {
   top: 12px;
   right: 16px;
 }
+
+.verify-success {
+  margin-top: 8px;
+  color: #2e7d32;
+}
+
+.verify-error {
+  margin-top: 8px;
+  color: #c62828;
+}

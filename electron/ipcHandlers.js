@@ -1,6 +1,39 @@
 const { ipcMain } = require("electron");
 const { saveConfig, loadConfig, clearConfig } = require("./configStore");
 
+const fetch = require("node-fetch");
+
+ipcMain.handle("config:verify-token", async (_, token) => {
+  try {
+    const res = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: "Invalid or expired GitHub token"
+      };
+    }
+
+    const data = await res.json();
+
+    return {
+      ok: true,
+      user: data.login
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      message: err.message
+    };
+  }
+});
+
+
 ipcMain.handle("app:ping", async () => "pong from main");
 
 ipcMain.handle("config:get", async () => {

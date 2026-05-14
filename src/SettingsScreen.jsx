@@ -10,12 +10,54 @@ export default function SettingsScreen({
   const [user, setUser] = useState(config?.user || "");
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  
+  const [verifying, setVerifying] = useState(false);
+  const [verifyResult, setVerifyResult] = useState(null);
+
+	const verify = async () => {
+	  if (!token.trim()) {
+		setVerifyResult({
+		  ok: false,
+		  message: "Enter a token to verify"
+		});
+		return;
+	  }
+
+	  setVerifying(true);
+	  setVerifyResult(null);
+
+	  const result = await window.config.verifyToken(token);
+
+	  setVerifyResult(result);
+	  setVerifying(false);
+
+	  if (result.ok && result.user) {
+		setUser(result.user); // auto-fill user if valid
+	  }
+	};	
+
+	{verifyResult && (
+	  <div
+		className={
+		  verifyResult.ok ? "verify-success" : "verify-error"
+		}
+	  >
+		{verifyResult.ok
+		  ? `✅ Token is valid for user ${verifyResult.user}`
+		  : `❌ ${verifyResult.message}`}
+	  </div>
+	)}	
 
   const save = async () => {
     if (!token.trim() && !user.trim()) {
       setError("Provide a new token or update user");
       return;
     }
+	
+	if (!verifyResult?.ok) {
+	  setError("Please verify token before saving");
+	  return;
+	}	
 
     try {
       setSaving(true);
@@ -57,6 +99,11 @@ export default function SettingsScreen({
         value={token}
         onChange={(e) => setToken(e.target.value)}
       />
+	  
+		<button onClick={verify} disabled={verifying}>
+		  {verifying ? "Verifying…" : "Verify Token"}
+		</button>
+
 
       {error && <div className="error">{error}</div>}
 
