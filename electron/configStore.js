@@ -1,24 +1,77 @@
-const keytar = require("keytar");
+const fs = require('fs');
+const path = require('path');
+const { app } = require('electron');
 
-const SERVICE = "AQSInspect";
-const ACCOUNT = "user-config";
+const CONFIG_FILE = path.join(
+  app.getPath('userData'),
+  'config.json'
+);
 
-async function saveConfig({ token, user }) {
-  const value = JSON.stringify({ token, user });
-  await keytar.setPassword(SERVICE, ACCOUNT, value);
+/* =============================
+   READ CONFIG
+============================= */
+function readConfig() {
+  try {
+    if (!fs.existsSync(CONFIG_FILE)) {
+      return {};
+    }
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf-8'));
+  } catch (err) {
+    console.error('❌ Failed to read config:', err);
+    return {};
+  }
 }
 
-async function loadConfig() {
-  const value = await keytar.getPassword(SERVICE, ACCOUNT);
-  return value ? JSON.parse(value) : null;
+/* =============================
+   WRITE CONFIG
+============================= */
+function writeConfig(data) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error('❌ Failed to write config:', err);
+  }
 }
 
-async function clearConfig() {
-  await keytar.deletePassword(SERVICE, ACCOUNT);
+/* =============================
+   ✅ FULL MERGE SAVE (CRITICAL FIX)
+============================= */
+function saveConfig(newData) {
+  try {
+    const existing = readConfig();
+
+    const merged = {
+      ...existing,
+      ...newData,
+
+      /* ✅ DEEP MERGE FOR LLM */
+      llm: {
+        ...(existing.llm || {}),
+        ...(newData.llm || {})
+      }
+    };
+
+    writeConfig(merged);
+
+    return true;
+  } catch (err) {
+    console.error('❌ Failed to save config:', err);
+    return false;
+  }
 }
 
-module.exports = {
-  saveConfig,
-  loadConfig,
-  clearConfig
+/* =============================
+   EXPORTS
+============================= */
+
+/* ✅ Used by App + Settings */
+exports.getConfig = () => readConfig();
+
+/* ✅ Used by IPC */
+exports.saveConfig = (data) => saveConfig(data);
+
+/* ✅ Used by AI pipeline */
+exports.getLLMConfig = () => {
+  const config = readConfig();
+  return config.llm || {};
 };

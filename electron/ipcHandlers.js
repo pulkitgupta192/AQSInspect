@@ -1,64 +1,71 @@
-const { ipcMain } = require("electron");
-const { saveConfig, loadConfig, clearConfig } = require("./configStore");
+const { ipcMain, app } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const axios = require("axios");
 
-const fetch = require("node-fetch");
+const store = require("./configStore"); // exports.getConfig/getLLMConfig/saveLLMConfig in your current file
 
-ipcMain.handle("config:verify-token", async (_, token) => {
+// -----------------------------
+// Config persistence (FULL MERGE)
+// -----------------------------
+const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
+
+function readConfigFile() {
   try {
-    const res = await fetch("https://api.github.com/user", {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json"
-      }
-    });
-
-    if (!res.ok) {
-      return {
-        ok: false,
-        message: "Invalid or expired GitHub token"
-      };
-    }
-
-    const data = await res.json();
-
-    return {
-      ok: true,
-      user: data.login
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      message: err.message
-    };
+    if (!fs.existsSync(CONFIG_FILE)) return {};
+    return JSON.parse(fs.readFileSync(CONFIG_FILE, "utf-8"));
+  } catch (e) {
+    console.error("❌ readConfigFile failed:", e.message);
+    return {};
   }
-});
+}
 
+function writeConfigFile(obj) {
+  try {
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(obj, null, 2), "utf-8");
+    return true;
+  } catch (e) {
+    console.error("❌ writeConfigFile failed:", e.message);
+    return false;
+  }
+}
 
-ipcMain.handle("app:ping", async () => "pong from main");
+function mergeConfig(existing, incoming) {
+  return {
+    ...existing,
+    ...incoming,
+    llm: {
+      ...(existing.llm || {}),
+      ...(incoming.llm || {})
+    }
+  };
+}
 
-ipcMain.handle("config:get", async () => {
-  return await loadConfig();
-});
-
-ipcMain.handle("config:save", async (_, config) => {
-  await saveConfig(config);
-  return { ok: true };
-});
-
-ipcMain.handle("config:clear", async () => {
-  await clearConfig();
-  return { ok: true };
-});
+// -----------------------------
+// Helpers
+// -----------------------------
+function normalizeToken(input) {
+  if (!input) return "";
+  let t = String(input).trim();
+  t = t.replace(/^token\s*:\s*/i, "");
+  t = t.replace(/^bearer\s+/i, "");
+  t = t.replace(/^token\s+/i, "");
+  const m = t.match(/github_pat_[A-Za-z0-9_]+/);
+  if (m) t = m[0];
+  return t.trim();
+}
 
 function parsePullRequestUrl(prUrl) {
   const u = new URL(prUrl);
   const parts = u.pathname.split("/").filter(Boolean);
-  if (parts.length < 4) throw new Error("Invalid PR URL format");
 
+  if (parts.length < 4) throw new Error("Invalid PR URL format");
   const [owner, repo, pullWord, prNumStr] = parts;
+
   if (pullWord !== "pull" && pullWord !== "pulls") {
     throw new Error("PR URL must contain /pull/ or /pulls/");
   }
+
   const pull_number = Number(prNumStr);
   if (!Number.isFinite(pull_number)) throw new Error("Invalid PR number");
 
@@ -70,45 +77,9 @@ function parsePullRequestUrl(prUrl) {
   return { owner, repo, pull_number, apiBase };
 }
 
-// Accepts raw PAT or strings like "token: <PAT>" / "Token <PAT>" / "Bearer <PAT>"
-function normalizeToken(input) {
-  if (!input) return "";
-  let t = String(input).trim();
-
-  // strip common prefixes
-  t = t.replace(/^token\s*:\s*/i, "");
-  t = t.replace(/^toekn\s*:\s*/i, ""); // your typo case
-  t = t.replace(/^bearer\s+/i, "");
-  t = t.replace(/^token\s+/i, "");
-
-  // if someone pasted a longer string containing github_pat_..., extract it
-  const m = t.match(/github_pat_[A-Za-z0-9_]+/);
-  if (m) t = m[0];
-
-  return t.trim();
-}
-
-function makeHeaders(token, accept = "application/vnd.github+json") {
-  return {
-    Accept: accept,
-    Authorization: `Bearer ${token}`,
-    "X-GitHub-Api-Version": "2026-03-10",
-    "User-Agent": "AQSInspect"
-  };
-}
-
-async function githubGet(url, token, accept) {
-  const res = await fetch(url, { headers: makeHeaders(token, accept) });
-  const bodyText = await res.text();
-  if (!res.ok) {
-    throw new Error(`GitHub API ${res.status}: ${bodyText || res.statusText}`);
-  }
-  return { res, bodyText };
-}
-
 function getNextLink(linkHeader) {
   if (!linkHeader) return null;
-  const parts = linkHeader.split(",").map(s => s.trim());
+  const parts = linkHeader.split(",").map((s) => s.trim());
   for (const p of parts) {
     const m = p.match(/<([^>]+)>\s*;\s*rel="next"/);
     if (m) return m[1];
@@ -116,35 +87,173 @@ function getNextLink(linkHeader) {
   return null;
 }
 
+function extractJson(text) {
+  if (!text) return null;
+  const trimmed = String(text).trim();
+
+  // direct JSON
+  try {
+    return JSON.parse(trimmed);
+  } catch (_) {}
+
+  // strip ```json fences
+  const fenced = trimmed.match(/```json([\s\S]*?)```/i);
+  if (fenced && fenced[1]) {
+    try {
+      return JSON.parse(fenced[1].trim());
+    } catch (_) {}
+  }
+
+  // find first {...}
+  const objMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (objMatch) {
+    try {
+      return JSON.parse(objMatch[0]);
+    } catch (_) {}
+  }
+
+  return null;
+}
+
+function getLLMConfigSafe() {
+  // Prefer your existing getLLMConfig if present
+  if (typeof store.getLLMConfig === "function") return store.getLLMConfig();
+
+  // fallback: read from config.json
+  const cfg = readConfigFile();
+  return cfg.llm || {};
+}
+
+function validateLLM(llm) {
+  if (!llm?.apiKey) return "API key is missing";
+  const provider = (llm.provider || "azure").toLowerCase();
+
+  if (provider === "azure") {
+    if (!llm.endpoint) return "Azure endpoint is missing";
+    if (!llm.model) return "Azure deployment name (model) is missing";
+  } else if (provider === "openai") {
+    if (!llm.model) return "OpenAI model is missing";
+  } else {
+    return "Unknown provider. Use 'azure' or 'openai'.";
+  }
+  return null;
+}
+
+// -----------------------------
+// IPC: App
+// -----------------------------
+ipcMain.handle("app:ping", async () => "pong from main");
+
+// -----------------------------
+// IPC: Config (the API your UI should use)
+// -----------------------------
+ipcMain.handle("config:get", async () => {
+  // Your configStore.getConfig() reads the same config.json path; use it if available
+  if (typeof store.getConfig === "function") return store.getConfig();
+  return readConfigFile();
+});
+
+ipcMain.handle("config:save", async (_evt, data) => {
+  const existing = readConfigFile();
+  const merged = mergeConfig(existing, data || {});
+  const ok = writeConfigFile(merged);
+  return { ok };
+});
+
+ipcMain.handle("config:clear", async () => {
+  try {
+    if (fs.existsSync(CONFIG_FILE)) fs.unlinkSync(CONFIG_FILE);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+
+// Backward-compat: some older code in your repo used config:verify-token (kept)
+ipcMain.handle("config:verify-token", async (_evt, token) => {
+  const t = normalizeToken(token);
+  if (!t) return { ok: false, message: "Token is required" };
+
+  try {
+    const res = await axios.get("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+    return { ok: true, user: res.data.login };
+  } catch (e) {
+    return { ok: false, message: e.response?.status === 401 ? "Invalid token" : e.message };
+  }
+});
+
+// -----------------------------
+// IPC: GitHub Token Verify (used by SettingsScreen.jsx)
+// -----------------------------
+ipcMain.handle("github:verify", async (_evt, token) => {
+  const t = normalizeToken(token);
+  if (!t) return { valid: false, error: "Token is required" };
+
+  try {
+    const res = await axios.get("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+    return { valid: true, username: res.data.login };
+  } catch (e) {
+    return { valid: false, error: e.response?.status === 401 ? "Invalid token" : e.message };
+  }
+});
+
+// -----------------------------
+// IPC: Fetch PR Diff (canonical handler for your app)
+// -----------------------------
 async function listAllPullFiles(apiBase, owner, repo, pull_number, token) {
   let url = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}/files?per_page=100&page=1`;
   const all = [];
+
   while (url) {
-    const { res, bodyText } = await githubGet(url, token);
-    const page = JSON.parse(bodyText);
-    if (Array.isArray(page)) all.push(...page);
-    url = getNextLink(res.headers.get("link"));
+    const res = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2026-03-10",
+        "User-Agent": "AQSInspect"
+      }
+    });
+
+    if (Array.isArray(res.data)) all.push(...res.data);
+    const link = res.headers?.link;
+    url = getNextLink(link);
   }
+
   return all;
 }
 
-ipcMain.handle("github:fetch-pr-diff", async (_evt, payload) => {
-  const prUrl = payload?.prUrl;
-  const token = normalizeToken(payload?.token);
-
-  if (!prUrl) throw new Error("prUrl is required");
-  if (!token) throw new Error("Valid GitHub token is required");
+ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
+  const t = normalizeToken(token);
+  if (!prUrl) throw new Error("PR URL is required");
+  if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");
 
   const { owner, repo, pull_number, apiBase } = parsePullRequestUrl(prUrl);
-
-  // PR metadata [1](https://docs.github.com/en/rest/pulls)
   const prApi = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}`;
-  const { bodyText: prText } = await githubGet(prApi, token);
-  const pr = JSON.parse(prText);
 
-  // PR files (paginated) [1](https://docs.github.com/en/rest/pulls)
-  const filesRaw = await listAllPullFiles(apiBase, owner, repo, pull_number, token);
-  const files = filesRaw.map(f => ({
+  // PR metadata
+  const prRes = await axios.get(prApi, {
+    headers: {
+      Authorization: `Bearer ${t}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2026-03-10",
+      "User-Agent": "AQSInspect"
+    }
+  });
+  const pr = prRes.data;
+
+  // files (paginated)
+  const filesRaw = await listAllPullFiles(apiBase, owner, repo, pull_number, t);
+  const files = filesRaw.map((f) => ({
     filename: f.filename,
     status: f.status,
     additions: f.additions,
@@ -153,13 +262,21 @@ ipcMain.handle("github:fetch-pr-diff", async (_evt, payload) => {
     patch: f.patch || null
   }));
 
-  // Unified diff (Accept header) [2](https://github.com/orgs/community/discussions/24460)
-  let unifiedDiff = null;
+  // unified diff
+  let unifiedDiff = "";
   try {
-    const { bodyText } = await githubGet(prApi, token, "application/vnd.github.v3.diff");
-    unifiedDiff = bodyText;
+    const diffRes = await axios.get(prApi, {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/vnd.github.v3.diff",
+        "User-Agent": "AQSInspect"
+      }
+    });
+    unifiedDiff = String(diffRes.data || "");
   } catch {
-    unifiedDiff = null;
+    unifiedDiff = files
+      .map((f) => `diff --git a/${f.filename} b/${f.filename}\n${f.patch || ""}`)
+      .join("\n\n");
   }
 
   return {
@@ -172,8 +289,6 @@ ipcMain.handle("github:fetch-pr-diff", async (_evt, payload) => {
       title: pr.title,
       state: pr.state,
       html_url: pr.html_url,
-      head: { ref: pr.head?.ref, sha: pr.head?.sha },
-      base: { ref: pr.base?.ref, sha: pr.base?.sha },
       changed_files: pr.changed_files,
       additions: pr.additions,
       deletions: pr.deletions
@@ -184,69 +299,153 @@ ipcMain.handle("github:fetch-pr-diff", async (_evt, payload) => {
   };
 });
 
-ipcMain.handle("ai:review-pr", async (_, payload) => {
-  const { title, unifiedDiff, files } = payload;
-
-  // ---- STUBBED AI LOGIC (replace later with real LLM call) ----
-  // This is intentionally deterministic + fast for now
-
-  const findings = [];
-
-  if (unifiedDiff?.includes("DELETE FROM") && !unifiedDiff?.includes("ROLLBACK")) {
-    findings.push({
-      severity: "critical",
-      title: "Missing ROLLBACK on failure",
-      explanation:
-        "The script deletes from a parent table without ensuring a rollback in the exception block, risking partial data loss."
-    });
-  }
-
-  if (unifiedDiff?.includes("/ v_order_count")) {
-    findings.push({
-      severity: "warning",
-      title: "Potential divide by zero",
-      explanation:
-        "The logic divides by v_order_count without guarding against zero, which will throw a runtime error."
-    });
-  }
-
-  if (unifiedDiff?.includes("DELETE FROM orders")) {
-    findings.push({
-      severity: "warning",
-      title: "Referential integrity risk",
-      explanation:
-        "Deleting from ORDERS without checking dependent ORDER_ITEMS can break referential integrity."
-    });
-  }
-
-  if (findings.length === 0) {
-	findings.push({
-	  severity: "warning",
-	  title: "Referential integrity risk",
-	  explanation:
-		"Deleting from ORDERS without checking ORDER_ITEMS can break referential integrity.",
-	  filename: "Safe_Update_Bug-06.sql",
-	  matchText: "DELETE FROM orders"
-	});
-  }
-
-	findings.push({
-	  severity: "critical",
-	  severityScore: 9,
-	  confidence: 92,
-	  title: "Missing ROLLBACK on failure",
-	  explanation:
-		"The exception handler logs the error but does not rollback the transaction, risking partial data corruption.",
-	  filename: "Safe_Update_Bug-06.sql",
-	  matchText: "EXCEPTION",
-	  rationale:
-		"Data modification statements are present before COMMIT, and the exception block lacks a rollback. This pattern reliably causes inconsistent state."
-	});
-
-  return {
-    ok: true,
-    summary: `AI review completed for PR: ${title}`,
-    findings
-  };
+// Backward compat: some earlier code used github:fetch-pr-diff
+ipcMain.handle("github:fetch-pr-diff", async (_evt, payload) => {
+  return ipcMain.emit ? await ipcMain.handle("pr:fetchDiff", _evt, payload) : await (async () => {
+    // fallback: call same logic
+    return await ipcMain._invokeHandler?.("pr:fetchDiff", _evt, payload);
+  })();
 });
 
+// -----------------------------
+// IPC: LLM Verify (Azure/OpenAI toggle)
+// -----------------------------
+ipcMain.handle("llm:verify", async (_evt, llmFromUi) => {
+  const llm = llmFromUi || getLLMConfigSafe();
+  const err = validateLLM(llm);
+  if (err) return { valid: false, error: err };
+
+  const provider = (llm.provider || "azure").toLowerCase();
+  const temperature = typeof llm.temperature === "number" ? llm.temperature : 0.2;
+
+  try {
+    if (provider === "openai") {
+      const res = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: llm.model,
+          messages: [{ role: "user", content: "test" }],
+          max_tokens: 5,
+          temperature
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${llm.apiKey}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+      if (res.status >= 200 && res.status < 300) return { valid: true };
+      return { valid: false, error: `Unexpected status ${res.status}` };
+    }
+
+    // Azure
+    const endpoint = String(llm.endpoint).replace(/\/$/, "");
+    const apiVersion = llm.apiVersion || "2024-02-15-preview";
+    const url = `${endpoint}/openai/deployments/${llm.model}/chat/completions?api-version=${apiVersion}`;
+
+    const res = await axios.post(
+      url,
+      {
+        messages: [{ role: "user", content: "test" }],
+        max_tokens: 5,
+        temperature
+      },
+      {
+        headers: {
+          "api-key": llm.apiKey,
+          "Content-Type": "application/json"
+        }
+      }
+    );
+
+    if (res.status >= 200 && res.status < 300) return { valid: true };
+    return { valid: false, error: `Unexpected status ${res.status}` };
+  } catch (e) {
+    return { valid: false, error: e.response?.data?.error?.message || e.message };
+  }
+});
+
+// -----------------------------
+// IPC: Full AI Review Pipeline (Azure/OpenAI)
+// -----------------------------
+ipcMain.handle("review:run", async (_evt, payload) => {
+  const llm = getLLMConfigSafe();
+  const err = validateLLM(llm);
+  if (err) throw new Error(err);
+
+  const provider = (llm.provider || "azure").toLowerCase();
+  const temperature = typeof llm.temperature === "number" ? llm.temperature : 0.2;
+
+  const unifiedDiff = payload?.unifiedDiff || "";
+  if (!unifiedDiff) throw new Error("No diff provided for AI review.");
+
+  const system = "You are an expert IFS AQS code reviewer. Output MUST be JSON only.";
+  const user = `
+Return JSON ONLY in this schema:
+{
+  "score": number (0-100),
+  "severity": "LOW" | "MEDIUM" | "HIGH",
+  "confidence": number (0-1),
+  "findings": [
+    { "title": string, "explanation": string, "filename": string, "matchText": string }
+  ]
+}
+
+Analyze this diff with IFS AQS mindset (IFS Apps8/9/10 and IFS Cloud, Aurena safe patterns):
+DIFF:
+${unifiedDiff}
+`;
+
+  const messages = [
+    { role: "system", content: system },
+    { role: "user", content: user }
+  ];
+
+  let url;
+  let headers;
+  let body;
+
+  if (provider === "openai") {
+    url = "https://api.openai.com/v1/chat/completions";
+    headers = {
+      Authorization: `Bearer ${llm.apiKey}`,
+      "Content-Type": "application/json"
+    };
+    body = { model: llm.model, messages, temperature };
+  } else {
+    const endpoint = String(llm.endpoint).replace(/\/$/, "");
+    const apiVersion = llm.apiVersion || "2024-02-15-preview";
+    url = `${endpoint}/openai/deployments/${llm.model}/chat/completions?api-version=${apiVersion}`;
+    headers = {
+      "api-key": llm.apiKey,
+      "Content-Type": "application/json"
+    };
+    body = { messages, temperature };
+  }
+
+  const res = await axios.post(url, body, { headers });
+
+  const content = res?.data?.choices?.[0]?.message?.content || "";
+  const parsed = extractJson(content);
+
+  if (!parsed) {
+    // graceful fallback, never crash UI
+    return {
+      score: 0,
+      severity: "MEDIUM",
+      confidence: 0.2,
+      findings: [
+        {
+          title: "LLM returned non-JSON output",
+          explanation: "The model response could not be parsed as JSON. Please retry with a smaller diff or different model.",
+          filename: "",
+          matchText: ""
+        }
+      ],
+      raw: content
+    };
+  }
+
+  return parsed;
+});

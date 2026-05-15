@@ -1,27 +1,36 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer } = require('electron');
 
-console.log("✅ PRELOAD START (stable)");
+console.log('✅ PRELOAD START (stable)');
 
-contextBridge.exposeInMainWorld("api", {
-  ping: () => ipcRenderer.invoke("app:ping"),
-  
-  reviewPullRequest: (payload) =>
-		ipcRenderer.invoke("ai:review-pr", payload),
-		
-  fetchPullRequestDiff: (payload) => {
-    if (!payload || typeof payload.prUrl !== "string") {
-      throw new Error("prUrl is required");
-    }
-    if (typeof payload.token !== "string" || !payload.token.trim()) {
-      throw new Error("token is required");
-    }
-    return ipcRenderer.invoke("github:fetch-pr-diff", payload);
-  }
-});
+/* ✅ SINGLE SOURCE OF IPC CONTRACT */
+contextBridge.exposeInMainWorld('api', {
+  /* =============================
+     CONFIG
+  ============================= */
+  getConfig: () => ipcRenderer.invoke('config:get'),
+  saveConfig: (data) => ipcRenderer.invoke('config:save', data),
+  clearConfig: () => ipcRenderer.invoke('config:clear'),
 
-contextBridge.exposeInMainWorld("config", {
-  get: () => ipcRenderer.invoke("config:get"),
-  save: (config) => ipcRenderer.invoke("config:save", config),
-  clear: () => ipcRenderer.invoke("config:clear"),
-  verifyToken: (token) => ipcRenderer.invoke("config:verify-token", token),
+  /* =============================
+     GITHUB
+  ============================= */
+  fetchPullRequestDiff: (payload) =>
+    ipcRenderer.invoke('pr:fetchDiff', payload),
+
+  verifyGitHubToken: (token) =>
+    ipcRenderer.invoke('github:verify', token),
+
+  /* =============================
+     LLM
+  ============================= */
+  runAIReview: (payload) =>
+    ipcRenderer.invoke('review:run', payload),
+
+  verifyLLMConfig: (llm) =>
+    ipcRenderer.invoke('llm:verify', llm),
+
+  /* =============================
+     DEBUG (OPTIONAL)
+  ============================= */
+  ping: () => ipcRenderer.invoke('app:ping')
 });

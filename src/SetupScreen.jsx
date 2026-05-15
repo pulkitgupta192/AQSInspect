@@ -1,40 +1,44 @@
 import { useState } from "react";
 
-export default function SetupScreen({ onSave }) {
-  const [token, setToken] = useState("");
-  const [user, setUser] = useState("");
-  const [error, setError] = useState(null);
+export default function SetupScreen({ onConfigured }) {
+  const [githubToken, setGithubToken] = useState("");
 
   const save = async () => {
-    if (!token.trim()) {
-      setError("GitHub token is required");
-      return;
-    }
+    try {
+      if (!githubToken) {
+        alert("GitHub token is required");
+        return;
+      }
 
-    await window.config.save({ token, user });
-    onSave({ token, user });
+      /* ✅ FIX: use window.api instead of window.config */
+      await window.api.saveConfig({
+        githubToken
+      });
+
+      const newConfig = await window.api.getConfig();
+
+      onConfigured(newConfig);
+    } catch (err) {
+      console.error("Setup failed:", err);
+      alert("Failed to save configuration");
+    }
   };
 
   return (
-    <div className="setup">
+    <div style={{ padding: 20 }}>
       <h2>Initial Setup</h2>
 
       <input
         type="password"
-        placeholder="GitHub API Token"
-        value={token}
-        onChange={(e) => setToken(e.target.value)}
+        placeholder="Enter GitHub Token"
+        value={githubToken}
+        onChange={(e) => setGithubToken(e.target.value)}
+        style={{ width: "100%" }}
       />
 
-      <input
-        placeholder="User (optional)"
-        value={user}
-        onChange={(e) => setUser(e.target.value)}
-      />
+      <br /><br />
 
-      {error && <div className="error">{error}</div>}
-
-      <button onClick={save}>Save & Continue</button>
+      <button onClick={save}>✅ Save & Continue</button>
     </div>
   );
 }

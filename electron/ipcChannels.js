@@ -5,4 +5,8 @@ const IPC_CHANNELS = {
   FETCH_PR_DIFF: "github:fetch-pr-diff"
 };
 
-module.exports = { IPC_CHANNELS };
+module.exports = {
+  GET_CONFIG: 'get-config',
+  SAVE_CONFIG: 'save-config',
+  RUN_LLM_REVIEW: 'run-llm-review'
+};
