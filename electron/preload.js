@@ -30,6 +30,15 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('llm:verify', llm),
 
   /* =============================
+     REPOSITORY
+  ============================= */
+  listPullRequests: (payload) =>
+    ipcRenderer.invoke('repo:listPullRequests', payload),
+
+  getPullRequestDetails: (payload) =>
+    ipcRenderer.invoke('repo:getPullRequestDetails', payload),
+
+  /* =============================
      DEBUG (OPTIONAL)
   ============================= */
   ping: () => ipcRenderer.invoke('app:ping')

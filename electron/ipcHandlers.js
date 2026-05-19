@@ -2,13 +2,15 @@ const { ipcMain, app } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const axios = require("axios");
-
+const { getProvider } = require("./providers"); // now resolves to electron/providers/index.js
 const store = require("./configStore"); // exports.getConfig/getLLMConfig/saveLLMConfig in your current file
 
 // -----------------------------
 // Config persistence (FULL MERGE)
 // -----------------------------
 const CONFIG_FILE = path.join(app.getPath("userData"), "config.json");
+
+
 
 function readConfigFile() {
   try {
@@ -31,14 +33,28 @@ function writeConfigFile(obj) {
 }
 
 function mergeConfig(existing, incoming) {
-  return {
+  const merged = {
     ...existing,
     ...incoming,
-    llm: {
-      ...(existing.llm || {}),
-      ...(incoming.llm || {})
-    }
+
+    // Deep merge blocks
+    llm: { ...(existing.llm || {}), ...(incoming.llm || {}) },
+    github: { ...(existing.github || {}), ...(incoming.github || {}) },
+    azure: { ...(existing.azure || {}), ...(incoming.azure || {}) },
   };
+
+  // Migration-safe: keep legacy githubToken in sync
+  if (merged.github?.token && !merged.githubToken) {
+    merged.githubToken = merged.github.token;
+  }
+  if (merged.githubToken && !merged.github?.token) {
+    merged.github = { ...(merged.github || {}), token: merged.githubToken };
+  }
+
+  // Default repoType
+  if (!merged.repoType) merged.repoType = "github";
+
+  return merged;
 }
 
 // -----------------------------
@@ -207,6 +223,50 @@ ipcMain.handle("github:verify", async (_evt, token) => {
   }
 });
 
+ipcMain.handle("repo:listPullRequests", async (_evt, payload) => {
+  const { repoType, filters } = payload || {};
+  const cfg = store.getConfig ? store.getConfig() : {};
+
+  const effectiveRepoType = (repoType || cfg.repoType || "github").toLowerCase();
+  const repoSettings =
+    effectiveRepoType === "azure"
+      ? (cfg.azure || {})
+      : (cfg.github || { token: cfg.githubToken });
+
+  try {
+    const provider = getProvider(effectiveRepoType);
+    const prs = await provider.listPullRequests({ filters, repoSettings });
+    return { ok: true, prs };
+  } catch (e) {
+    // No secrets logged
+    console.error("listPullRequests failed:", e?.message || e);
+    return {
+      ok: false,
+      error: "Failed to load pull requests. Please verify repository settings.",
+    };
+  }
+});
+
+ipcMain.handle("repo:getPullRequestDetails", async (_evt, payload) => {
+  const { repoType, prUrlOrId } = payload || {};
+  const cfg = store.getConfig ? store.getConfig() : {};
+
+  const effectiveRepoType = (repoType || cfg.repoType || "github").toLowerCase();
+  const repoSettings =
+    effectiveRepoType === "azure"
+      ? (cfg.azure || {})
+      : (cfg.github || { token: cfg.githubToken });
+
+  try {
+    const provider = getProvider(effectiveRepoType);
+    const pr = await provider.getPullRequestDetails({ prUrlOrId, repoSettings });
+    return { ok: true, pr };
+  } catch (e) {
+    console.error("getPullRequestDetails failed:", e?.message || e);
+    return { ok: false, error: "Failed to load PR details." };
+  }
+});
+
 // -----------------------------
 // IPC: Fetch PR Diff (canonical handler for your app)
 // -----------------------------
@@ -233,6 +293,13 @@ async function listAllPullFiles(apiBase, owner, repo, pull_number, token) {
 }
 
 ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
+	
+
+// Renderer can send either:
+// 1) { prUrl, token } (legacy GitHub)
+// 2) { prUrl, repoType } (new)
+
+	
   const t = normalizeToken(token);
   if (!prUrl) throw new Error("PR URL is required");
   if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");

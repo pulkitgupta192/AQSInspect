@@ -8,5 +8,7 @@ const IPC_CHANNELS = {
 module.exports = {
   GET_CONFIG: 'get-config',
   SAVE_CONFIG: 'save-config',
-  RUN_LLM_REVIEW: 'run-llm-review'
+  RUN_LLM_REVIEW: 'run-llm-review',
+  LIST_PULL_REQUESTS: "listPullRequests",
+  GET_PULL_REQUEST_DETAILS: "getPullRequestDetails"  
 };

@@ -6,6 +6,8 @@ import "./styles.css";
 /* -----------------------------
    Helpers: filename matching
 ------------------------------ */
+
+
 const normPath = (p) => (p || "").replace(/\\/g, "/").trim();
 const baseName = (p) => {
   const n = normPath(p);
@@ -50,6 +52,65 @@ export default function App() {
   const anchorsRef = useRef([]); // ordered DOM anchors for jump
   const anchorKeyToIndex = useRef(new Map()); // key -> index
 
+  // PR Picker (multi-repo)
+  const [repoType, setRepoType] = useState("github");
+  const [filters, setFilters] = useState({
+    createdFrom: "",
+    createdTo: "",
+    createdBy: "",
+    status: "all"
+  });
+  const [prList, setPrList] = useState([]);
+  const [prListLoading, setPrListLoading] = useState(false);
+  const [selectedPrId, setSelectedPrId] = useState("");
+
+
+	const loadPRs = async () => {
+	  setPrListLoading(true);
+    // quick client-side validation
+    if (repoType === "github") {
+      const g = config?.github || {};
+      const t = config?.githubToken || g.token;
+      if (!t) {
+        setPrListLoading(false);
+        setError("GitHub Token is missing. Please configure it in Settings.");
+        return;
+      }
+      if (!(g.owner && g.repo)) {
+        setPrListLoading(false);
+        setError("GitHub repository owner/repo are missing. Please configure Owner and Repo in Settings.");
+        return;
+      }
+    }
+    if (repoType === "azure") {
+      const a = config?.azure || {};
+      if (!(a.org && a.project && a.repoIdOrName && a.pat)) {
+        setPrListLoading(false);
+        setError("Azure DevOps settings are missing. Please configure org/project/repo/PAT in Settings.");
+        return;
+      }
+    }
+	  setError(null);
+	  try {
+		const res = await window.api.listPullRequests({ repoType, filters });
+		if (!res?.ok) {
+		  setError(res?.error || "Failed to load PRs");
+		  return;
+		}
+		setPrList(res.prs || []);
+	  } catch {
+		setError("Failed to load PRs");
+	  } finally {
+		setPrListLoading(false);
+	  }
+	};
+		
+	const onSelectPR = (id) => {
+	  setSelectedPrId(id);
+	  const pr = prList.find((p) => p.id === id);
+	  if (pr?.url) setPrUrl(pr.url);
+	};	
+
   /* =============================
      Load config once
   ============================= */
@@ -58,6 +119,7 @@ export default function App() {
       try {
         const cfg = await window.api.getConfig();
         setConfig(cfg || {});
+		setRepoType(cfg?.repoType || "github");
       } finally {
         setCheckingConfig(false);
       }
@@ -70,9 +132,12 @@ export default function App() {
   const viewMode = useMemo(() => {
     if (checkingConfig) return "loading";
     if (showSettings) return "settings";
-    if (!config?.githubToken) return "setup";
+    const needsSetup = repoType === "azure"
+      ? !(config?.azure?.org && config?.azure?.project && config?.azure?.repoIdOrName && config?.azure?.pat)
+      : !(config?.githubToken);
+    if (needsSetup) return "setup";
     return "main";
-  }, [checkingConfig, showSettings, config?.githubToken]);
+  }, [checkingConfig, showSettings, config?.githubToken, config?.azure, repoType]);
 
   /* =============================
      Derived: filtered findings
@@ -136,6 +201,10 @@ export default function App() {
 
     if (!prUrl) {
       setError("PR URL is required");
+      return;
+    }
+    if (repoType !== "github") {
+      setError("Diff fetch is currently supported for GitHub only. Select GitHub repository (or implement Azure diff fetch next).");
       return;
     }
     if (!config?.githubToken) {
@@ -219,6 +288,7 @@ export default function App() {
           onConfigured={async () => {
             const cfg = await window.api.getConfig();
             setConfig(cfg || {});
+			setRepoType(cfg?.repoType || "github");
           }}
         />
       )}
@@ -228,6 +298,7 @@ export default function App() {
           onBack={async () => {
             const cfg = await window.api.getConfig();
             setConfig(cfg || {});
+			setRepoType(cfg?.repoType || "github");
             setShowSettings(false);
           }}
         />
@@ -251,10 +322,96 @@ export default function App() {
 
           {/* PR Controls */}
           <div className="panel">
+            {/* Repo + Filters */}
+            <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
+              <select
+                className="input"
+                style={{ maxWidth: 180 }}
+                value={repoType}
+                onChange={(e) => {
+                  setRepoType(e.target.value);
+                  setSelectedPrId("");
+                  setPrList([]);
+                }}
+              >
+                <option value="github">GitHub</option>
+                <option value="azure">Azure DevOps</option>
+              </select>
+
+              <input
+                className="input"
+                style={{ maxWidth: 160 }}
+                type="date"
+                value={filters.createdFrom}
+                onChange={(e) => setFilters((p) => ({ ...p, createdFrom: e.target.value }))}
+                title="Created from"
+              />
+              <input
+                className="input"
+                style={{ maxWidth: 160 }}
+                type="date"
+                value={filters.createdTo}
+                onChange={(e) => setFilters((p) => ({ ...p, createdTo: e.target.value }))}
+                title="Created to"
+              />
+
+              <input
+                className="input"
+                style={{ minWidth: 180 }}
+                placeholder="Created by (user)"
+                value={filters.createdBy}
+                onChange={(e) => setFilters((p) => ({ ...p, createdBy: e.target.value }))}
+              />
+
+              <select
+                className="input"
+                style={{ maxWidth: 160 }}
+                value={filters.status}
+                onChange={(e) => setFilters((p) => ({ ...p, status: e.target.value }))}
+                title="Status"
+              >
+                <option value="all">All</option>
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+                <option value="merged">Merged</option>
+              </select>
+
+              <button className="btn" onClick={loadPRs} disabled={prListLoading}>
+                {prListLoading ? "Loading PRs…" : "Load PRs"}
+              </button>
+            </div>
+
+            {/* PR Picker */}
+            <div className="row" style={{ gap: 8, marginTop: 8 }}>
+              <select
+                className="input"
+                value={selectedPrId}
+                onChange={(e) => onSelectPR(e.target.value)}
+              >
+                <option value="">Select a PR…</option>
+                {prList.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {`#${p.id} — ${String(p.title || "").slice(0, 90)}${String(p.title || "").length > 90 ? "…" : ""} (${p.status})`}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn"
+                onClick={() => {
+                  setSelectedPrId("");
+                  setPrUrl("");
+                }}
+                disabled={!selectedPrId && !prUrl}
+                title="Clear selection"
+              >
+                Clear
+              </button>
+            </div>
+
             <div className="row">
               <input
                 className="input"
-                placeholder="Paste GitHub PR URL"
+                placeholder="PR URL (auto-filled from picker, editable)"
                 value={prUrl}
                 onChange={(e) => setPrUrl(e.target.value)}
               />

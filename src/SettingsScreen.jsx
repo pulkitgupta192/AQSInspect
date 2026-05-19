@@ -4,10 +4,15 @@ export default function SettingsScreen({ onBack }) {
   /* =============================
      STATE
   ============================= */
+  const [loading, setLoading] = useState(true);
+
+  // Repo settings
+  const [repoType, setRepoType] = useState("github");
+  const [github, setGithub] = useState({ token: "", owner: "", repo: "", baseUrl: "" });
+  const [azure, setAzure] = useState({ org: "", project: "", repoIdOrName: "", pat: "", baseUrl: "", apiVersion: "7.1" });
+
+  // LLM settings
   const [provider, setProvider] = useState("azure");
-
-  const [githubToken, setGithubToken] = useState("");
-
   const [llm, setLLM] = useState({
     endpoint: "",
     apiKey: "",
@@ -17,7 +22,6 @@ export default function SettingsScreen({ onBack }) {
 
   const [verifyStatus, setVerifyStatus] = useState(null);
   const [llmStatus, setLlmStatus] = useState(null);
-  const [loading, setLoading] = useState(true);
 
   /* =============================
      LOAD CONFIG
@@ -27,9 +31,23 @@ export default function SettingsScreen({ onBack }) {
       try {
         const cfg = await window.api.getConfig();
 
-        if (cfg?.githubToken) {
-          setGithubToken(cfg.githubToken);
-        }
+        setRepoType(cfg?.repoType || "github");
+
+        setGithub({
+          token: cfg?.github?.token || cfg?.githubToken || "",
+          owner: cfg?.github?.owner || "",
+          repo: cfg?.github?.repo || "",
+          baseUrl: cfg?.github?.baseUrl || ""
+        });
+
+        setAzure({
+          org: cfg?.azure?.org || "",
+          project: cfg?.azure?.project || "",
+          repoIdOrName: cfg?.azure?.repoIdOrName || "",
+          pat: cfg?.azure?.pat || "",
+          baseUrl: cfg?.azure?.baseUrl || "",
+          apiVersion: cfg?.azure?.apiVersion || "7.1"
+        });
 
         if (cfg?.llm) {
           setLLM(cfg.llm);
@@ -48,10 +66,8 @@ export default function SettingsScreen({ onBack }) {
   ============================= */
   const verifyToken = async () => {
     setVerifyStatus("Checking...");
-
     try {
-      const result = await window.api.verifyGitHubToken(githubToken);
-
+      const result = await window.api.verifyGitHubToken(github.token);
       if (result.valid) {
         setVerifyStatus(`✅ Valid (User: ${result.username})`);
       } else {
@@ -79,11 +95,7 @@ export default function SettingsScreen({ onBack }) {
     setLlmStatus("Checking...");
 
     try {
-      const result = await window.api.verifyLLMConfig({
-        ...llm,
-        provider
-      });
-
+      const result = await window.api.verifyLLMConfig({ ...llm, provider });
       if (result.valid) {
         setLlmStatus("✅ LLM connection successful");
       } else {
@@ -99,12 +111,32 @@ export default function SettingsScreen({ onBack }) {
   ============================= */
   const saveConfig = async () => {
     try {
-      await window.api.saveConfig({
-        githubToken,
-        llm: {
-          ...llm,
-          provider
+      setVerifyStatus(null);
+
+      // Validate
+      if (repoType === "github") {
+        if (!github.token || !github.owner || !github.repo) {
+          setVerifyStatus("❌ GitHub token + owner + repo are required");
+          return;
         }
+      }
+
+      if (repoType === "azure") {
+        if (!azure.org || !azure.project || !azure.repoIdOrName || !azure.pat) {
+          setVerifyStatus("❌ Azure org + project + repo + PAT are required");
+          return;
+        }
+      }
+
+      await window.api.saveConfig({
+        repoType,
+        github: { ...github, baseUrl: github.baseUrl || undefined },
+        azure: { ...azure, baseUrl: azure.baseUrl || undefined },
+
+        // migration-safe legacy key
+        githubToken: github.token,
+
+        llm: { ...llm, provider }
       });
 
       alert("✅ Configuration saved");
@@ -118,35 +150,120 @@ export default function SettingsScreen({ onBack }) {
     return <div style={{ padding: 20 }}>Loading settings...</div>;
   }
 
-  /* =============================
-     UI
-  ============================= */
   return (
     <div style={{ padding: 20 }}>
       <h2>Settings</h2>
 
-      {/* ✅ BACK BUTTON */}
       <button onClick={onBack}>⬅ Back</button>
 
       <hr />
 
       {/* =============================
-          GITHUB CONFIG
+          REPOSITORY
       ============================= */}
-      <h3>GitHub Configuration</h3>
+      <h3>Repository</h3>
+      <select
+        value={repoType}
+        onChange={(e) => setRepoType(e.target.value)}
+        style={{ width: "100%", padding: 8, marginTop: 6 }}
+      >
+        <option value="github">GitHub</option>
+        <option value="azure">Azure DevOps</option>
+      </select>
 
-      <input
-        type="password"
-        placeholder="GitHub Token"
-        value={githubToken}
-        onChange={(e) => setGithubToken(e.target.value)}
-        style={{ width: "100%" }}
-      />
+      <div style={{ marginTop: 12 }}>
+        {repoType === "github" && (
+          <>
+            <h3 style={{ marginTop: 10 }}>GitHub Repository Settings</h3>
 
-      <div style={{ marginTop: 10 }}>
-        <button onClick={verifyToken}>🔍 Verify Token</button>
-        {verifyStatus && (
-          <span style={{ marginLeft: 10 }}>{verifyStatus}</span>
+            <input
+              type="password"
+              placeholder="GitHub Token"
+              value={github.token}
+              onChange={(e) => setGithub({ ...github, token: e.target.value })}
+              style={{ width: "100%" }}
+            />
+
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <input
+                placeholder="Owner (org/user)"
+                value={github.owner}
+                onChange={(e) => setGithub({ ...github, owner: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <input
+                placeholder="Repo"
+                value={github.repo}
+                onChange={(e) => setGithub({ ...github, repo: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+
+            <input
+              placeholder="Base URL (optional, GitHub Enterprise)"
+              value={github.baseUrl}
+              onChange={(e) => setGithub({ ...github, baseUrl: e.target.value })}
+              style={{ width: "100%", marginTop: 10 }}
+            />
+
+            <div style={{ marginTop: 10 }}>
+              <button onClick={verifyToken}>🔍 Verify Token</button>
+              {verifyStatus && <span style={{ marginLeft: 10 }}>{verifyStatus}</span>}
+            </div>
+          </>
+        )}
+
+        {repoType === "azure" && (
+          <>
+            <h3 style={{ marginTop: 10 }}>Azure DevOps Repository Settings</h3>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <input
+                placeholder="Organization"
+                value={azure.org}
+                onChange={(e) => setAzure({ ...azure, org: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <input
+                placeholder="Project"
+                value={azure.project}
+                onChange={(e) => setAzure({ ...azure, project: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+
+            <input
+              placeholder="Repository ID or Name"
+              value={azure.repoIdOrName}
+              onChange={(e) => setAzure({ ...azure, repoIdOrName: e.target.value })}
+              style={{ width: "100%", marginTop: 10 }}
+            />
+
+            <input
+              type="password"
+              placeholder="Azure DevOps PAT"
+              value={azure.pat}
+              onChange={(e) => setAzure({ ...azure, pat: e.target.value })}
+              style={{ width: "100%", marginTop: 10 }}
+            />
+
+            <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+              <input
+                placeholder="Base URL (optional)"
+                value={azure.baseUrl}
+                onChange={(e) => setAzure({ ...azure, baseUrl: e.target.value })}
+                style={{ flex: 1 }}
+              />
+              <input
+                placeholder="API Version"
+                value={azure.apiVersion}
+                onChange={(e) => setAzure({ ...azure, apiVersion: e.target.value })}
+                style={{ flex: 1 }}
+              />
+            </div>
+
+            {verifyStatus && <div style={{ marginTop: 10 }}>{verifyStatus}</div>}
+          </>
         )}
       </div>
 
@@ -156,11 +273,7 @@ export default function SettingsScreen({ onBack }) {
           LLM PROVIDER
       ============================= */}
       <h3>LLM Provider</h3>
-
-      <select
-        value={provider}
-        onChange={(e) => setProvider(e.target.value)}
-      >
+      <select value={provider} onChange={(e) => setProvider(e.target.value)}>
         <option value="azure">Azure OpenAI</option>
         <option value="openai">OpenAI (api.openai.com)</option>
       </select>
@@ -172,14 +285,11 @@ export default function SettingsScreen({ onBack }) {
       ============================= */}
       <h3>LLM Configuration</h3>
 
-      {/* ✅ Only show endpoint for Azure */}
       {provider === "azure" && (
         <input
           placeholder="Azure Endpoint"
           value={llm.endpoint}
-          onChange={(e) =>
-            setLLM({ ...llm, endpoint: e.target.value })
-          }
+          onChange={(e) => setLLM({ ...llm, endpoint: e.target.value })}
           style={{ width: "100%" }}
         />
       )}
@@ -188,18 +298,14 @@ export default function SettingsScreen({ onBack }) {
         type="password"
         placeholder="API Key"
         value={llm.apiKey}
-        onChange={(e) =>
-          setLLM({ ...llm, apiKey: e.target.value })
-        }
+        onChange={(e) => setLLM({ ...llm, apiKey: e.target.value })}
         style={{ width: "100%", marginTop: 10 }}
       />
 
       <input
         placeholder="Model / Deployment Name"
         value={llm.model}
-        onChange={(e) =>
-          setLLM({ ...llm, model: e.target.value })
-        }
+        onChange={(e) => setLLM({ ...llm, model: e.target.value })}
         style={{ width: "100%", marginTop: 10 }}
       />
 
@@ -219,9 +325,7 @@ export default function SettingsScreen({ onBack }) {
 
       <div style={{ marginTop: 10 }}>
         <button onClick={verifyLLM}>🧪 Verify LLM</button>
-        {llmStatus && (
-          <span style={{ marginLeft: 10 }}>{llmStatus}</span>
-        )}
+        {llmStatus && <span style={{ marginLeft: 10 }}>{llmStatus}</span>}
       </div>
 
       <hr />

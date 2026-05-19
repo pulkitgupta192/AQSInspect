@@ -37,28 +37,40 @@ function writeConfig(data) {
    ✅ FULL MERGE SAVE (CRITICAL FIX)
 ============================= */
 function saveConfig(newData) {
-  try {
-    const existing = readConfig();
+   try {
+     const existing = readConfig();
 
     const merged = {
       ...existing,
       ...newData,
 
-      /* ✅ DEEP MERGE FOR LLM */
-      llm: {
-        ...(existing.llm || {}),
-        ...(newData.llm || {})
-      }
+      // ✅ Deep merge blocks we’ll extend over time
+      llm: { ...(existing.llm || {}), ...(newData.llm || {}) },
+      github: { ...(existing.github || {}), ...(newData.github || {}) },
+      azure: { ...(existing.azure || {}), ...(newData.azure || {}) },
     };
 
-    writeConfig(merged);
+    // ✅ Migration-safe: keep legacy githubToken in sync
+    // - If new github.token provided, also set githubToken
+    if (merged.github?.token && !merged.githubToken) {
+      merged.githubToken = merged.github.token;
+    }
+    // - If legacy githubToken exists but github.token absent, backfill github.token
+    if (merged.githubToken && !merged.github?.token) {
+      merged.github = { ...(merged.github || {}), token: merged.githubToken };
+    }
 
-    return true;
-  } catch (err) {
-    console.error('❌ Failed to save config:', err);
-    return false;
-  }
-}
+    // ✅ Default repoType
+    if (!merged.repoType) merged.repoType = "github";
+
+     writeConfig(merged);
+
+     return true;
+   } catch (err) {
+     console.error('❌ Failed to save config:', err);
+     return false;
+   }
+ }
 
 /* =============================
    EXPORTS
