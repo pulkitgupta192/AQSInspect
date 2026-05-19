@@ -33,28 +33,14 @@ function writeConfigFile(obj) {
 }
 
 function mergeConfig(existing, incoming) {
-  const merged = {
+  return {
     ...existing,
     ...incoming,
-
-    // Deep merge blocks
-    llm: { ...(existing.llm || {}), ...(incoming.llm || {}) },
-    github: { ...(existing.github || {}), ...(incoming.github || {}) },
-    azure: { ...(existing.azure || {}), ...(incoming.azure || {}) },
+    llm: {
+      ...(existing.llm || {}),
+      ...(incoming.llm || {})
+    }
   };
-
-  // Migration-safe: keep legacy githubToken in sync
-  if (merged.github?.token && !merged.githubToken) {
-    merged.githubToken = merged.github.token;
-  }
-  if (merged.githubToken && !merged.github?.token) {
-    merged.github = { ...(merged.github || {}), token: merged.githubToken };
-  }
-
-  // Default repoType
-  if (!merged.repoType) merged.repoType = "github";
-
-  return merged;
 }
 
 // -----------------------------
@@ -270,6 +256,321 @@ ipcMain.handle("repo:getPullRequestDetails", async (_evt, payload) => {
 // -----------------------------
 // IPC: Fetch PR Diff (canonical handler for your app)
 // -----------------------------
+
+// -----------------------------
+// Azure DevOps diff implementation (PAT auth)
+// -----------------------------
+function isAzureDevOpsPrUrl(prUrl) {
+  try {
+    const u = new URL(prUrl);
+    const h = (u.hostname || "").toLowerCase();
+    return h.includes("dev.azure.com") || h.includes("visualstudio.com");
+  } catch {
+    return false;
+  }
+}
+
+function parseAzurePullRequestId(prUrl) {
+  // Supports:
+  // - Web URL:  https://dev.azure.com/org/project/_git/repo/pullrequest/123
+  // - API URL:  https://dev.azure.com/org/project/_apis/git/repositories/{repo}/pullRequests/123
+  // - Query:    ...?pullRequestId=123
+  // - Numeric:  "123"
+  const s = String(prUrl || "").trim();
+  if (!s) return null;
+
+  // Numeric-only input
+  if (/^\d+$/.test(s)) return s;
+
+  // Web form
+  let m = s.match(/pullrequest\/(\d+)/i);
+  if (m) return m[1];
+
+  // API form (Azure REST often returns this)
+  m = s.match(/pullrequests\/(\d+)/i);
+  if (m) return m[1];
+
+  // Query param form
+  m = s.match(/[?&]pullRequestId=(\d+)/i);
+  if (m) return m[1];
+
+  return null;
+}
+
+function azureAuthHeaderFromPat(pat) {
+  // Basic base64(":" + PAT)
+  const b64 = Buffer.from(`:${pat}`, "utf8").toString("base64");
+  return `Basic ${b64}`;
+}
+
+function stripLeadingSlash(p) {
+  const s = String(p || "");
+  return s.startsWith("/") ? s.slice(1) : s;
+}
+
+async function azureGetJson(url, headers) {
+  const res = await axios.get(url, { headers });
+  return res.data;
+}
+
+async function azureGetItemText({ apiRoot, path, commitId, apiVersion, headers }) {
+  // Azure DevOps Git Items API supports includeContent=true when requesting json.
+  const qs = new URLSearchParams();
+  qs.set("path", path);
+  qs.set("includeContent", "true");
+  qs.set("$format", "json");
+  qs.set("versionDescriptor.version", commitId);
+  qs.set("versionDescriptor.versionType", "commit");
+  qs.set("api-version", apiVersion);
+
+  const url = `${apiRoot}/items?${qs.toString()}`;
+  try {
+    const res = await axios.get(url, { headers });
+    const data = res.data;
+    if (typeof data === "string") return data;
+    if (data && typeof data.content === "string") return data.content;
+    return "";
+  } catch {
+    // Deleted/binary files may not return content
+    return "";
+  }
+}
+
+// Minimal Myers diff for line arrays -> operations
+function myersOps(aLines, bLines, maxTotalLines = 6000) {
+  const a = Array.isArray(aLines) ? aLines : [];
+  const b = Array.isArray(bLines) ? bLines : [];
+
+  if (a.length + b.length > maxTotalLines) {
+    return { ops: null, tooLarge: true };
+  }
+
+  const N = a.length;
+  const M = b.length;
+  const max = N + M;
+
+  let v = new Map();
+  v.set(1, 0);
+  const trace = [];
+
+  for (let d = 0; d <= max; d++) {
+    trace.push(new Map(v));
+    for (let k = -d; k <= d; k += 2) {
+      let x;
+      const vKMinus = v.get(k - 1);
+      const vKPlus = v.get(k + 1);
+
+      if (k === -d || (k !== d && (vKMinus ?? -1) < (vKPlus ?? -1))) {
+        x = vKPlus ?? 0;
+      } else {
+        x = (vKMinus ?? 0) + 1;
+      }
+
+      let y = x - k;
+      while (x < N && y < M && a[x] === b[y]) {
+        x++;
+        y++;
+      }
+      v.set(k, x);
+
+      if (x >= N && y >= M) {
+        // Backtrack to build ops
+        let bx = N;
+        let by = M;
+        const ops = [];
+
+        for (let bd = trace.length - 1; bd >= 0; bd--) {
+          const vv = trace[bd];
+          const bk = bx - by;
+          let prevK;
+
+          if (bk === -bd || (bk !== bd && (vv.get(bk - 1) ?? -1) < (vv.get(bk + 1) ?? -1))) {
+            prevK = bk + 1;
+          } else {
+            prevK = bk - 1;
+          }
+
+          const prevX = vv.get(prevK) ?? 0;
+          const prevY = prevX - prevK;
+
+          while (bx > prevX && by > prevY) {
+            ops.push({ type: "equal", line: a[bx - 1] });
+            bx--;
+            by--;
+          }
+
+          if (bd === 0) break;
+
+          if (bx === prevX) {
+            ops.push({ type: "insert", line: b[by - 1] });
+            by--;
+          } else {
+            ops.push({ type: "delete", line: a[bx - 1] });
+            bx--;
+          }
+        }
+
+        ops.reverse();
+        return { ops, tooLarge: false };
+      }
+    }
+  }
+
+  return { ops: null, tooLarge: true };
+}
+
+function buildUnifiedPatchForFile(filePath, oldText, newText) {
+  const oldLines = String(oldText ?? "").split(/\r?\n/);
+  const newLines = String(newText ?? "").split(/\r?\n/);
+
+  const { ops, tooLarge } = myersOps(oldLines, newLines);
+
+  const p = stripLeadingSlash(filePath);
+  const header = [
+    `diff --git a/${p} b/${p}`,
+    `--- a/${p}`,
+    `+++ b/${p}`
+  ];
+
+  if (tooLarge || !ops) {
+    const h = "@@ -1,0 +1,0 @@";
+    const body = ["+[Large file diff omitted by AQS Inspect]"]; 
+    return { patch: header.concat([h]).concat(body).join("\n"), additions: 0, deletions: 0 };
+  }
+
+  let additions = 0;
+  let deletions = 0;
+  const bodyLines = [];
+
+  for (const op of ops) {
+    if (op.type === "equal") bodyLines.push(" " + (op.line ?? ""));
+    else if (op.type === "insert") {
+      additions++;
+      bodyLines.push("+" + (op.line ?? ""));
+    } else if (op.type === "delete") {
+      deletions++;
+      bodyLines.push("-" + (op.line ?? ""));
+    }
+  }
+
+  const oldCount = oldLines.length;
+  const newCount = newLines.length;
+  const oldStart = oldCount === 0 ? 0 : 1;
+  const newStart = newCount === 0 ? 0 : 1;
+  const h = `@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`;
+
+  return {
+    patch: header.concat([h]).concat(bodyLines).join("\n"),
+    additions,
+    deletions
+  };
+}
+
+async function fetchAzurePullRequestDiff({ prUrl, cfg }) {
+  const prId = parseAzurePullRequestId(prUrl);
+  if (!prId) throw new Error("Azure PR ID not found in URL");
+
+  const a = cfg?.azure || {};
+  const org = a.org;
+  const project = a.project;
+  const repoIdOrName = a.repoIdOrName;
+  const pat = a.pat;
+  const apiVersion = a.apiVersion || "7.1";
+
+  if (!org || !project || !repoIdOrName || !pat) {
+    throw new Error("Azure DevOps settings are incomplete (org/project/repo/PAT required). Please configure them in Settings.");
+  }
+
+  const baseUrlRaw = String(a.baseUrl || "https://dev.azure.com").trim().replace(/\/+$/, "");
+  const orgRoot = baseUrlRaw.toLowerCase().endsWith("/" + org.toLowerCase())
+    ? baseUrlRaw
+    : `${baseUrlRaw}/${encodeURIComponent(org)}`;
+
+  const apiRoot = `${orgRoot}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoIdOrName)}`;
+  const headers = {
+    Authorization: azureAuthHeaderFromPat(pat),
+    Accept: "application/json"
+  };
+
+  // PR details
+  const prApiUrl = `${apiRoot}/pullRequests/${encodeURIComponent(prId)}?api-version=${encodeURIComponent(apiVersion)}`;
+  const pr = await azureGetJson(prApiUrl, headers);
+
+  const baseCommit = pr?.lastMergeTargetCommit?.commitId || pr?.lastMergeCommit?.commitId;
+  const targetCommit = pr?.lastMergeSourceCommit?.commitId || pr?.lastMergeCommit?.commitId;
+
+  if (!baseCommit || !targetCommit) {
+    throw new Error("Unable to determine PR base/target commits from Azure DevOps response.");
+  }
+
+  // Diffs between commits: returns changed items list
+  const diffQs = new URLSearchParams();
+  diffQs.set("api-version", apiVersion);
+  diffQs.set("baseVersion", baseCommit);
+  diffQs.set("baseVersionType", "commit");
+  diffQs.set("targetVersion", targetCommit);
+  diffQs.set("targetVersionType", "commit");
+  diffQs.set("$top", "2000");
+
+  const diffsUrl = `${apiRoot}/diffs/commits?${diffQs.toString()}`;
+  const diffs = await azureGetJson(diffsUrl, headers);
+  const changes = Array.isArray(diffs?.changes) ? diffs.changes : [];
+
+  const fileChanges = changes
+    .map((c) => ({ path: c?.item?.path, changeType: c?.changeType || "edit" }))
+    .filter((c) => typeof c.path === "string" && c.path && !c.path.endsWith("/"));
+
+  const MAX_FILES = 60;
+  const limited = fileChanges.slice(0, MAX_FILES);
+
+  const files = [];
+  let unifiedDiff = "";
+
+  for (const ch of limited) {
+    const filePath = ch.path;
+    const ct = String(ch.changeType || "edit").toLowerCase();
+
+    const oldText = ct.includes("add") ? "" : await azureGetItemText({ apiRoot, path: filePath, commitId: baseCommit, apiVersion, headers });
+    const newText = ct.includes("delete") ? "" : await azureGetItemText({ apiRoot, path: filePath, commitId: targetCommit, apiVersion, headers });
+
+    const { patch, additions, deletions } = buildUnifiedPatchForFile(filePath, oldText, newText);
+
+    const fileObj = {
+      filename: stripLeadingSlash(filePath),
+      status: ct.includes("add") ? "added" : ct.includes("delete") ? "removed" : "modified",
+      additions,
+      deletions,
+      changes: additions + deletions,
+      patch
+    };
+
+    files.push(fileObj);
+    unifiedDiff += (unifiedDiff ? "\n\n" : "") + patch;
+  }
+
+  const state = String(pr?.status || "").toLowerCase();
+
+  return {
+    ok: true,
+    apiBase: apiRoot,
+    pr: {
+      org,
+      project,
+      repo: repoIdOrName,
+      number: Number(prId),
+      title: pr?.title,
+      state,
+      html_url: pr?._links?.web?.href || pr?.url || prUrl,
+      changed_files: files.length,
+      additions: files.reduce((s, f) => s + (f.additions || 0), 0),
+      deletions: files.reduce((s, f) => s + (f.deletions || 0), 0)
+    },
+    filesCount: files.length,
+    files,
+    unifiedDiff
+  };
+}
+
 async function listAllPullFiles(apiBase, owner, repo, pull_number, token) {
   let url = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}/files?per_page=100&page=1`;
   const all = [];
@@ -292,22 +593,25 @@ async function listAllPullFiles(apiBase, owner, repo, pull_number, token) {
   return all;
 }
 
-ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
-	
-
-// Renderer can send either:
-// 1) { prUrl, token } (legacy GitHub)
-// 2) { prUrl, repoType } (new)
-
-	
-  const t = normalizeToken(token);
+ipcMain.handle("pr:fetchDiff", async (_evt, payload) => {
+  const { prUrl, token, repoType } = payload || {};
   if (!prUrl) throw new Error("PR URL is required");
+
+  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
+  const inferred = isAzureDevOpsPrUrl(prUrl) ? "azure" : "github";
+  const effectiveRepoType = String(repoType || cfg?.repoType || inferred || "github").toLowerCase();
+
+  if (effectiveRepoType === "azure") {
+    return await fetchAzurePullRequestDiff({ prUrl, cfg });
+  }
+
+  // GitHub (existing behaviour)
+  const t = normalizeToken(token || cfg?.githubToken || cfg?.github?.token);
   if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");
 
   const { owner, repo, pull_number, apiBase } = parsePullRequestUrl(prUrl);
   const prApi = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}`;
 
-  // PR metadata
   const prRes = await axios.get(prApi, {
     headers: {
       Authorization: `Bearer ${t}`,
@@ -318,7 +622,6 @@ ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
   });
   const pr = prRes.data;
 
-  // files (paginated)
   const filesRaw = await listAllPullFiles(apiBase, owner, repo, pull_number, t);
   const files = filesRaw.map((f) => ({
     filename: f.filename,
@@ -329,7 +632,6 @@ ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
     patch: f.patch || null
   }));
 
-  // unified diff
   let unifiedDiff = "";
   try {
     const diffRes = await axios.get(prApi, {
@@ -342,8 +644,9 @@ ipcMain.handle("pr:fetchDiff", async (_evt, { prUrl, token }) => {
     unifiedDiff = String(diffRes.data || "");
   } catch {
     unifiedDiff = files
-      .map((f) => `diff --git a/${f.filename} b/${f.filename}\n${f.patch || ""}`)
-      .join("\n\n");
+      .map((f) => `diff --git a/${f.filename} b/${f.filename}
+${f.patch || ""}`)
+      .join("\n");
   }
 
   return {
