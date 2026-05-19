@@ -120,12 +120,39 @@ export default function App() {
   const moduleTree = useMemo(() => buildModuleTree(files), [files]);
 
   const [expandedModules, setExpandedModules] = useState(() => new Set());
+  
+  // =============================
+  // Pane collapse states (Diff Focus Mode)
+  // =============================
+  const [navCollapsed, setNavCollapsed] = useState(false);      // left folder tree
+  const [reviewCollapsed, setReviewCollapsed] = useState(false); // right AI review pane
+
+  const focusDiff = () => {
+    setNavCollapsed(true);
+    setReviewCollapsed(true);
+  };
+
+  const resetPanels = () => {
+    setNavCollapsed(false);
+    setReviewCollapsed(false);
+  };  
 
   // Auto-expand all modules whenever file list changes (new PR fetch)
   useEffect(() => {
     const next = new Set((moduleTree.modules || []).map((m) => m.module));
     setExpandedModules(next);
   }, [moduleTree.modules]);
+  
+useEffect(() => {
+  const onKey = (e) => {
+    if (!e.ctrlKey) return;
+    if (e.key === "\\") setNavCollapsed(v => !v);
+    if (e.key === "/") setReviewCollapsed(v => !v);
+    if (e.key === "Enter") focusDiff();
+  };
+  window.addEventListener("keydown", onKey);
+  return () => window.removeEventListener("keydown", onKey);
+}, []);  
 
   const toggleModule = (moduleName) => {
     setExpandedModules((prev) => {
@@ -397,11 +424,19 @@ export default function App() {
               <div className="subtitle">PR Diff & AI Review</div>
             </div>
 
-            <div className="topbar__actions">
-              <button className="btn" onClick={() => setShowSettings(true)}>
-                ⚙ Settings
-              </button>
-            </div>
+			<div className="topbar__actions">
+			  <button className="btn" onClick={focusDiff} title="Collapse panels to focus on diff">
+				⤢ Focus Diff
+			  </button>
+			  <button className="btn" onClick={resetPanels} title="Restore panels">
+				⤡ Restore
+			  </button>
+
+			  <button className="btn" onClick={() => setShowSettings(true)}>
+				⚙ Settings
+			  </button>
+			</div>
+			
           </div>
 
           {/* PR Controls */}
@@ -585,86 +620,79 @@ export default function App() {
           {/* Main Layout */}
           <div className="workarea">
             {/* Sidebar */}
-            <aside className="sidebar">
-			  <div className="sidebar__title">Files</div>
+			<aside className={`sidebar ${navCollapsed ? "collapsed" : ""}`}>
+			  <div className={`pane-title ${navCollapsed ? "is-collapsed" : ""}`}>
+				{!navCollapsed && <span>Files</span>}
+				<button
+				  className="pane-toggle"
+				  onClick={() => setNavCollapsed((v) => !v)}
+				  title={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
+				  aria-label={navCollapsed ? "Maximize navigator" : "Minimize navigator"}
+				>
+				  {navCollapsed ? "+" : "−"}
+				</button>
+			  </div>
 
-			  {(moduleTree.modules || []).map((mod) => {
-				const isOpen = expandedModules.has(mod.module);
+			  {!navCollapsed && (
+				<div className="pane-body sidebar-body">
+				  {(moduleTree.modules || []).map((mod) => {
+					const isOpen = expandedModules.has(mod.module);
 
-				return (
-				  <div key={mod.module} style={{ marginBottom: 10 }}>
-					{/* Module Header */}
-					<div
-					  onClick={() => toggleModule(mod.module)}
-					  title={`Module: ${mod.module}`}
-					  style={{
-						display: "flex",
-						alignItems: "center",
-						gap: 8,
-						padding: "8px 10px",
-						cursor: "pointer",
-						userSelect: "none",
-						borderBottom: "1px solid rgba(30,41,59,0.35)",
-						background: "rgba(2,6,23,0.25)",
-						position: "sticky",
-						top: 0,
-						zIndex: 2,
-					  }}
-					>
-					  <span style={{ width: 16, opacity: 0.9 }}>{isOpen ? "▾" : "▸"}</span>
-					  <span style={{ fontWeight: 900 }}>{mod.module}</span>
-					  <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.75 }}>
-						{mod.files.length} file{mod.files.length === 1 ? "" : "s"}
-					  </span>
-					</div>
+					return (
+					  <div key={mod.module} className="module-block">
+						{/* Module Header */}
+						<div
+						  className="module-header"
+						  onClick={() => toggleModule(mod.module)}
+						  title={`Module: ${mod.module}`}
+						>
+						  <span className="module-caret">{isOpen ? "▾" : "▸"}</span>
+						  <span className="module-name">{mod.module}</span>
+						  <span className="module-count">
+							{mod.files.length} file{mod.files.length === 1 ? "" : "s"}
+						  </span>
+						</div>
 
-					{/* Module Files */}
-					{isOpen &&
-					  mod.files.map((f) => {
-						const stats = fileSummary[f.filename] || { critical: 0, warning: 0, info: 0, total: 0 };
-						const active = selectedFile?.filename === f.filename;
+						{/* Module Files */}
+						{isOpen &&
+						  mod.files.map((f) => {
+							const stats = fileSummary[f.filename] || { critical: 0, warning: 0, info: 0, total: 0 };
+							const active = selectedFile?.filename === f.filename;
+							const serial = moduleTree.serialByFilename.get(f.filename) || "";
+							const displayName = mod.module === "Root" ? f.filename : getModuleRelativePath(f.filename);
 
-						const serial = moduleTree.serialByFilename.get(f.filename) || "";
-						const displayName =
-						  mod.module === "Root" ? f.filename : getModuleRelativePath(f.filename);
+							return (
+							  <div
+								key={f.filename}
+								className={`file ${active ? "active" : ""}`}
+								onClick={() => setSelectedFile(f)}
+								title={f.filename}
+								style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: 10 }}
+							  >
+								<div style={{ width: 30, textAlign: "right", opacity: 0.65, fontSize: 12 }}>
+								  {serial}.
+								</div>
 
-						return (
-						  <div
-							key={f.filename}
-							className={`file ${active ? "active" : ""}`}
-							onClick={() => setSelectedFile(f)}
-							title={f.filename}
-							style={{
-							  display: "flex",
-							  alignItems: "center",
-							  gap: 10,
-							  paddingLeft: 10,
-							}}
-						  >
-							{/* Serial No */}
-							<div style={{ width: 30, textAlign: "right", opacity: 0.65, fontSize: 12 }}>
-							  {serial}.
-							</div>
+								<div style={{ flex: 1, minWidth: 0 }}>
+								  <div className="file__name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+									{displayName}
+								  </div>
 
-							{/* Name + badges (keeps your existing structure) */}
-							<div style={{ flex: 1, minWidth: 0 }}>
-							  <div className="file__name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-								{displayName}
+								  <div className="file__badges" style={{ marginTop: 4 }}>
+									{stats.critical > 0 && <span className="badge critical">🔴 {stats.critical}</span>}
+									{stats.warning > 0 && <span className="badge warning">🟡 {stats.warning}</span>}
+									{stats.info > 0 && <span className="badge info">🟢 {stats.info}</span>}
+									{stats.total === 0 && <span className="badge none">No issues</span>}
+								  </div>
+								</div>
 							  </div>
-
-							  <div className="file__badges" style={{ marginTop: 4 }}>
-								{stats.critical > 0 && <span className="badge critical">🔴 {stats.critical}</span>}
-								{stats.warning > 0 && <span className="badge warning">🟡 {stats.warning}</span>}
-								{stats.info > 0 && <span className="badge info">🟢 {stats.info}</span>}
-								{stats.total === 0 && <span className="badge none">No issues</span>}
-							  </div>
-							</div>
-						  </div>
-						);
-					  })}
-				  </div>
-				);
-			  })}
+							);
+						  })}
+					  </div>
+					);
+				  })}
+				</div>
+			  )}
 			</aside>
 
             {/* Diff + Review */}
@@ -684,25 +712,45 @@ export default function App() {
               </div>
 
               {/* Always show review list (enterprise) */}
-              <div className="reviewpane">
-                <div className="reviewpane__title">Review Findings</div>
-                {aiReview?.findings?.length ? (
-                  aiReview.findings.map((f, idx) => (
-                    <div key={idx} className={`reviewcard ${String(f.severity || "").toLowerCase()}`}>
-                      <div className="reviewcard__hdr">
-                        <span className="sev">{String(f.severity || "info").toUpperCase()}</span>
-                        <span className="title">{f.title}</span>
-                      </div>
-                      <div className="reviewcard__body">{f.explanation}</div>
-                      <div className="reviewcard__meta">
-                        {f.filename ? <>File: <b>{f.filename}</b></> : <span className="muted">File: (not specified)</span>}
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="muted">No AI findings yet. Click “Generate AI Review”.</div>
-                )}
-              </div>
+                {/* Review pane */}
+				<div className={`reviewpane ${reviewCollapsed ? "collapsed" : ""}`}>
+				  <div className={`pane-title ${reviewCollapsed ? "is-collapsed" : ""}`}>
+					{!reviewCollapsed && <span>Review Findings</span>}
+					<button
+					  className="pane-toggle"
+					  onClick={() => setReviewCollapsed((v) => !v)}
+					  title={reviewCollapsed ? "Maximize AI review" : "Minimize AI review"}
+					  aria-label={reviewCollapsed ? "Maximize AI review" : "Minimize AI review"}
+					>
+					  {reviewCollapsed ? "+" : "−"}
+					</button>
+				  </div>
+
+				  {!reviewCollapsed && (
+					<div className="pane-body review-body">
+					  {aiReview?.findings?.length ? (
+						aiReview.findings.map((f, idx) => (
+						  <div key={idx} className={`reviewcard ${String(f.severity || "").toLowerCase()}`}>
+							<div className="reviewcard__hdr">
+							  <span className="sev">{String(f.severity || "info").toUpperCase()}</span>
+							  <span className="title">{f.title}</span>
+							</div>
+							<div className="reviewcard__body">{f.explanation}</div>
+							<div className="reviewcard__meta">
+							  {f.filename ? (
+								<>File: <b>{f.filename}</b></>
+							  ) : (
+								<span className="muted">File: (not specified)</span>
+							  )}
+							</div>
+						  </div>
+						))
+					  ) : (
+						<div className="muted">No AI findings yet. Click “Generate AI Review”.</div>
+					  )}
+					</div>
+				  )}
+				</div>
             </main>
           </div>
         </>
