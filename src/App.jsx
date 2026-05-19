@@ -7,6 +7,56 @@ import "./styles.css";
    Helpers: filename matching
 ------------------------------ */
 
+// -----------------------------
+// Helpers: module grouping for navigator
+// -----------------------------
+const getModuleName = (filename) => {
+  const p = normPath(filename);
+  if (!p) return "Root";
+  const parts = p.split("/").filter(Boolean);
+  return parts.length > 1 ? parts[0] : "Root";
+};
+
+const getModuleRelativePath = (filename) => {
+  const p = normPath(filename);
+  if (!p) return "";
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length <= 1) return p; // Root file
+  return parts.slice(1).join("/");
+};
+
+const buildModuleTree = (files) => {
+  const map = new Map(); // module -> files[]
+  (files || []).forEach((f) => {
+    const mod = getModuleName(f.filename);
+    if (!map.has(mod)) map.set(mod, []);
+    map.get(mod).push(f);
+  });
+
+  // Sort modules alphabetically, Root always on top
+  const modules = Array.from(map.entries())
+    .sort(([a], [b]) => {
+      if (a === "Root") return -1;
+      if (b === "Root") return 1;
+      return a.localeCompare(b);
+    })
+    .map(([module, list]) => ({
+      module,
+      files: list.slice().sort((x, y) => normPath(x.filename).localeCompare(normPath(y.filename))),
+    }));
+
+  // Global serial numbering in rendered order (module order + file order)
+  const serialByFilename = new Map();
+  let idx = 1;
+  modules.forEach((m) => {
+    m.files.forEach((f) => {
+      serialByFilename.set(f.filename, idx++);
+    });
+  });
+
+  return { modules, serialByFilename };
+};
+
 const normPath = (p) => (p || "").replace(/\\/g, "/").trim();
 const baseName = (p) => {
   const n = normPath(p);
@@ -63,6 +113,28 @@ export default function App() {
   const [issueIndex, setIssueIndex] = useState(0);
   const anchorsRef = useRef([]); // ordered DOM anchors for jump
   const anchorKeyToIndex = useRef(new Map()); // key -> index
+  
+  // =============================
+  // Navigator: module-wise file tree
+  // =============================
+  const moduleTree = useMemo(() => buildModuleTree(files), [files]);
+
+  const [expandedModules, setExpandedModules] = useState(() => new Set());
+
+  // Auto-expand all modules whenever file list changes (new PR fetch)
+  useEffect(() => {
+    const next = new Set((moduleTree.modules || []).map((m) => m.module));
+    setExpandedModules(next);
+  }, [moduleTree.modules]);
+
+  const toggleModule = (moduleName) => {
+    setExpandedModules((prev) => {
+      const next = new Set(prev);
+      if (next.has(moduleName)) next.delete(moduleName);
+      else next.add(moduleName);
+      return next;
+    });
+  };  
   
   const loadPRs = async () => {
     setPrListLoading(true);
@@ -514,28 +586,86 @@ export default function App() {
           <div className="workarea">
             {/* Sidebar */}
             <aside className="sidebar">
-              <div className="sidebar__title">Files</div>
-              {files.map((f) => {
-                const stats = fileSummary[f.filename] || { critical: 0, warning: 0, info: 0, total: 0 };
-                const active = selectedFile?.filename === f.filename;
-                return (
-                  <div
-                    key={f.filename}
-                    className={`file ${active ? "active" : ""}`}
-                    onClick={() => setSelectedFile(f)}
-                    title={f.filename}
-                  >
-                    <div className="file__name">{f.filename}</div>
-                    <div className="file__badges">
-                      {stats.critical > 0 && <span className="badge critical">🔴 {stats.critical}</span>}
-                      {stats.warning > 0 && <span className="badge warning">🟡 {stats.warning}</span>}
-                      {stats.info > 0 && <span className="badge info">🟢 {stats.info}</span>}
-                      {stats.total === 0 && <span className="badge none">No issues</span>}
-                    </div>
-                  </div>
-                );
-              })}
-            </aside>
+			  <div className="sidebar__title">Files</div>
+
+			  {(moduleTree.modules || []).map((mod) => {
+				const isOpen = expandedModules.has(mod.module);
+
+				return (
+				  <div key={mod.module} style={{ marginBottom: 10 }}>
+					{/* Module Header */}
+					<div
+					  onClick={() => toggleModule(mod.module)}
+					  title={`Module: ${mod.module}`}
+					  style={{
+						display: "flex",
+						alignItems: "center",
+						gap: 8,
+						padding: "8px 10px",
+						cursor: "pointer",
+						userSelect: "none",
+						borderBottom: "1px solid rgba(30,41,59,0.35)",
+						background: "rgba(2,6,23,0.25)",
+						position: "sticky",
+						top: 0,
+						zIndex: 2,
+					  }}
+					>
+					  <span style={{ width: 16, opacity: 0.9 }}>{isOpen ? "▾" : "▸"}</span>
+					  <span style={{ fontWeight: 900 }}>{mod.module}</span>
+					  <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.75 }}>
+						{mod.files.length} file{mod.files.length === 1 ? "" : "s"}
+					  </span>
+					</div>
+
+					{/* Module Files */}
+					{isOpen &&
+					  mod.files.map((f) => {
+						const stats = fileSummary[f.filename] || { critical: 0, warning: 0, info: 0, total: 0 };
+						const active = selectedFile?.filename === f.filename;
+
+						const serial = moduleTree.serialByFilename.get(f.filename) || "";
+						const displayName =
+						  mod.module === "Root" ? f.filename : getModuleRelativePath(f.filename);
+
+						return (
+						  <div
+							key={f.filename}
+							className={`file ${active ? "active" : ""}`}
+							onClick={() => setSelectedFile(f)}
+							title={f.filename}
+							style={{
+							  display: "flex",
+							  alignItems: "center",
+							  gap: 10,
+							  paddingLeft: 10,
+							}}
+						  >
+							{/* Serial No */}
+							<div style={{ width: 30, textAlign: "right", opacity: 0.65, fontSize: 12 }}>
+							  {serial}.
+							</div>
+
+							{/* Name + badges (keeps your existing structure) */}
+							<div style={{ flex: 1, minWidth: 0 }}>
+							  <div className="file__name" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+								{displayName}
+							  </div>
+
+							  <div className="file__badges" style={{ marginTop: 4 }}>
+								{stats.critical > 0 && <span className="badge critical">🔴 {stats.critical}</span>}
+								{stats.warning > 0 && <span className="badge warning">🟡 {stats.warning}</span>}
+								{stats.info > 0 && <span className="badge info">🟢 {stats.info}</span>}
+								{stats.total === 0 && <span className="badge none">No issues</span>}
+							  </div>
+							</div>
+						  </div>
+						);
+					  })}
+				  </div>
+				);
+			  })}
+			</aside>
 
             {/* Diff + Review */}
             <main className="main">
