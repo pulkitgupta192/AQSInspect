@@ -332,6 +332,7 @@ export default function DiffViewer({ file, findings = [], onRequestFullFile }) {
   const addedFull = status === "added" ? extractAddedFileContentFromPatch(patch) : "";
 
   return (
+    <>
     <div ref={surfaceRef} className={`diff-surface az mode-${mode}`}>
       <div className="sticky file-header">{file.filename}</div>
 
