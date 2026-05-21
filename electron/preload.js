@@ -37,6 +37,10 @@ contextBridge.exposeInMainWorld('api', {
 
   getPullRequestDetails: (payload) =>
     ipcRenderer.invoke('repo:getPullRequestDetails', payload),
+	
+  generateFix: (payload) => ipcRenderer.invoke("fix:generate", payload),	
+  
+  getFileContent: (payload) => ipcRenderer.invoke("file:getContent", payload),
 
   /* =============================
      DEBUG (OPTIONAL)

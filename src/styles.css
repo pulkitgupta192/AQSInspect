@@ -20,6 +20,7 @@
 }
 
 * { box-sizing: border-box; }
+
 body{
   margin:0;
   font-family: "Segoe UI", Arial, sans-serif;
@@ -48,6 +49,37 @@ body{
 .topbar__title .brand{ font-weight:700; letter-spacing:.2px; }
 .topbar__title .subtitle{ font-size:12px; opacity:.85; margin-top:2px; }
 .topbar__actions{ display:flex; gap:8px; }
+
+/* Topbar additions: search + avatar */
+.topbar__search{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  background: rgba(255,255,255,0.06);
+  padding:6px 8px;
+  border-radius:10px;
+  border:1px solid rgba(255,255,255,0.04);
+}
+.topbar__search input{
+  border:0;
+  outline:none;
+  background:transparent;
+  color:#fff;
+  width:260px;
+}
+.topbar__avatar{
+  width:36px;
+  height:36px;
+  border-radius:8px;
+  background:linear-gradient(135deg,#1f2937,#374151);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#fff;
+  font-weight:700;
+  box-shadow: 0 2px 6px rgba(2,6,23,0.6);
+  border:1px solid rgba(255,255,255,0.04);
+}
 
 /* =========================
    Panel + controls
@@ -172,6 +204,44 @@ body{
   display:flex;
   flex-direction:column;
 }
+
+/* File tree modern styles */
+.az-tree{ padding:8px; }
+.az-tree-row{ display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; border-radius:8px; }
+.az-tree-row:hover{ background: rgba(2,6,23,0.03); }
+.az-tree-icon{ width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:14px; }
+.az-tree-name{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.az-tree-badge{ margin-left:6px; }
+.az-tree-folder .az-tree-icon{ color:#f59e0b; }
+.az-tree-file .az-tree-icon{ color:#2563eb; }
+
+/* AI Review Modal (premium) */
+.ai-overlay{
+  position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:9999;
+  background: linear-gradient(180deg, rgba(2,6,23,0.3), rgba(2,6,23,0.6));
+  backdrop-filter: blur(4px);
+}
+.ai-modal{
+  width:100%; max-width:1200px; height:80vh; background:linear-gradient(180deg,#ffffff,#fbfdff);
+  border-radius:12px; box-shadow: 0 12px 40px rgba(2,6,23,0.6); overflow:hidden; display:flex; flex-direction:column; border:1px solid rgba(30,41,59,0.06);
+}
+.ai-header{ padding:16px 18px; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(15,23,42,0.04); }
+.ai-title{ font-size:18px; font-weight:800; }
+.ai-body{ display:flex; flex:1; overflow:hidden; }
+.ai-left{ width:260px; border-right:1px solid rgba(15,23,42,0.04); padding:12px; overflow:auto; }
+.ai-right{ flex:1; padding:14px; overflow:auto; }
+.ai-section-title{ font-weight:800; margin-bottom:8px; }
+.ai-file{ display:block; width:100%; text-align:left; padding:8px 10px; border-radius:8px; margin-bottom:6px; border:1px solid rgba(15,23,42,0.03); background: #fff; cursor:pointer; }
+.ai-file.active{ background: linear-gradient(90deg, rgba(37,99,235,0.08), rgba(37,99,235,0.03)); border-color: rgba(37,99,235,0.12); }
+.ai-filelist{ display:flex; flex-direction:column; gap:6px; }
+.ai-footer{ padding:10px 14px; border-top:1px solid rgba(15,23,42,0.04); display:flex; justify-content:space-between; align-items:center; }
+
+/* Buttons: elevated primary */
+.btn.primary{ box-shadow: 0 6px 18px rgba(37,99,235,0.12); border-radius:10px; padding:10px 14px; }
+.btn.success{ box-shadow: 0 6px 18px rgba(16,185,129,0.08); border-radius:10px; padding:10px 14px; }
+
+/* Subtle card elevation for review cards */
+.reviewcard{ box-shadow: 0 6px 18px rgba(2,6,23,0.06); }
 .sidebar__title{
   padding:12px;
   font-weight:700;
@@ -210,10 +280,10 @@ body{
   flex:1;
   display:flex;
   gap:12px;
-  min-width:0;
+  min-height: 0; /* ✅ important for nested scroll */
 }
 
-/* Diff pane */
+/* DiffPane Container */
 .diffpane{
   flex:1.6;
   background:var(--panel);
@@ -223,6 +293,19 @@ body{
   min-width:0;
   display:flex;
   flex-direction:column;
+  min-height: 0;
+  max-width: 100%;
+}
+
+/* Diff surface (fixed height with proper scrolling) */
+.diff-surface.az {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Review pane */
@@ -243,10 +326,22 @@ body{
 /* =========================
    Diff surface (GitHub-like)
 ========================= */
+/* ✅ GitHub-style: ONE scrollbar for entire diff surface */
 .diff-surface{
   height:100%;
-  overflow:auto;
+  overflow:auto;              /* both vertical + horizontal */
   background:#fff;
+
+  /* modern thin scrollbar support */
+  scrollbar-width: thin;      /* Firefox */
+  scrollbar-color: rgba(100,116,139,.45) transparent;
+}
+
+/* ✅ The inner content should size to its content width */
+.diff-content{
+  display:inline-block;       /* allows width to expand */
+  min-width:100%;             /* never smaller than viewport */
+  width:max-content;          /* expands based on longest line */
 }
 .sticky{
   position:sticky;
@@ -260,16 +355,22 @@ body{
   background:#fafbff;
 }
 .hunk{
-  border-bottom:1px solid var(--border);
+  border:1px solid rgba(148,163,184,.18);
+  border-radius:16px;
+  margin: 16px 12px 8px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: 0 18px 45px rgba(15,23,42,.07);
 }
 .hunk-header{
   position:sticky;
   top:42px; /* sits under file header */
   z-index:15;
-  padding:8px 12px;
+  padding:12px 16px;
   font-family: Consolas, monospace;
-  background:#f3f4f6;
-  border-bottom:1px solid var(--border);
+  background:#f8fafc;
+  border-bottom:1px solid rgba(148,163,184,.16);
+  color:#0f172a;
 }
 
 .split-head{
@@ -288,18 +389,42 @@ body{
 .split-row{
   display:grid;
   grid-template-columns:1fr 1fr;
-  border-bottom:1px solid #f1f3f7;
+  border-bottom:1px solid rgba(226,232,240,.9);
 }
 .cell{
   display:flex;
-  gap:8px;
-  padding:2px 10px;
+  gap:10px;
+  padding:10px 12px;
   font-family: Consolas, "Courier New", monospace;
-  font-size:12px;
-  line-height:1.45;
+  font-size:13px;
+  line-height:1.55;
   white-space:pre;
-  overflow-x:auto;
+  min-height: 36px;
+  overflow: visible;
+  align-items: flex-start;
+  min-width: 0;
 }
+
+.code {
+  flex: 1;
+  overflow: auto;
+  white-space: pre;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.code-inner {
+  display: inline-block;
+  min-width: max-content;
+  transform: translateX(calc(var(--oldX, 0) * -1px));
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.cell.neu .code-inner {
+  transform: translateX(calc(var(--newX, 0) * -1px));
+}
+
 
 /* ✅ IMPORTANT: base background is neutral, not column-tinted */
 .cell.old{ background:var(--row-ctx); }
@@ -323,9 +448,35 @@ body{
   border-right:1px solid rgba(0,0,0,.06);
   padding-right:8px;
 }
+/* .code{ */
+  /* flex: 0 0 auto;            /* ✅ do not shrink */ */
+  /* white-space: pre; */
+  /* min-width: max-content;     /* ✅ forces horizontal overflow when needed */ */
+/* } */
+
+
 .code{
-  flex:1;
+  flex: 1;
+  overflow: hidden;         /* clip, scrollbar handled by bottom bars */
+  white-space: pre;
 }
+
+/* The actual line content we translate left/right */
+.code-inner{
+  display: inline-block;
+  min-width: max-content;   /* ensures true width measurement */
+  transform: translateX(calc(var(--oldX, 0) * -1px));
+}
+.cell.neu .code-inner{
+  transform: translateX(calc(var(--newX, 0) * -1px));
+}
+
+/* Initialize CSS vars */
+.diff-surface{
+  --oldX: 0;
+  --newX: 0;
+}
+
 
 /* No newline marker as full width row */
 .no-newline-row{
@@ -402,6 +553,7 @@ body{
   padding:10px;
   margin-bottom:10px;
   background:#fff;
+  box-shadow: 0 12px 28px rgba(15,23,42,.05);
 }
 .reviewcard.critical{ border-left:4px solid var(--red); }
 .reviewcard.warning{ border-left:4px solid var(--amber); }
@@ -422,6 +574,100 @@ body{
 .reviewcard__hdr .title{ font-weight:700; }
 .reviewcard__body{ margin-top:6px; color:#374151; font-size:13px; }
 .reviewcard__meta{ margin-top:8px; font-size:12px; color:var(--muted); }
+
+.review-workflow{
+  width:100%;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:16px;
+  padding:16px;
+  box-shadow:0 18px 40px rgba(15,23,42,.06);
+}
+.workflow-header{
+  display:flex;
+  gap:16px;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:16px;
+}
+.workflow-title{
+  font-size:16px;
+  font-weight:800;
+}
+.workflow-subtitle{
+  font-size:13px;
+  color:var(--muted);
+  margin-top:4px;
+}
+.workflow-stats{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+.workflow-pill{
+  border-radius:999px;
+  padding:6px 12px;
+  font-size:12px;
+  font-weight:700;
+  color:#fff;
+}
+.workflow-pill.critical{ background:#ef4444; }
+.workflow-pill.warning{ background:#f59e0b; }
+.workflow-pill.info{ background:#2563eb; }
+.workflow-grid{
+  display:grid;
+  gap:12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.workflow-step{
+  background:#f8fafc;
+  border-radius:14px;
+  border:1px solid rgba(37,99,235,.12);
+  padding:14px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.workflow-step.critical{ border-color: rgba(239,68,68,.2); }
+.workflow-step.warning{ border-color: rgba(245,158,11,.2); }
+.workflow-step.info{ border-color: rgba(37,99,235,.2); }
+.workflow-step__header{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  flex-wrap:wrap;
+}
+.workflow-step__tag{
+  font-size:11px;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.8px;
+}
+.workflow-step__file{
+  font-size:12px;
+  color:var(--muted);
+}
+.workflow-step__title{
+  font-weight:700;
+  line-height:1.3;
+}
+.workflow-step__body{
+  font-size:13px;
+  color:#334155;
+  line-height:1.6;
+}
+.workflow-step__meta{
+  font-size:12px;
+  color:var(--muted);
+}
+.workflow-empty{
+  padding:18px;
+  border-radius:14px;
+  background:#f8fafc;
+  color:#475569;
+  text-align:center;
+}
 
 .empty{
   padding:16px;
@@ -468,6 +714,7 @@ body{
 .reviewpane.collapsed{
   width:44px !important;
   min-width:44px !important;
+  flex:0 0 44px !important;
   overflow:hidden !important;
 }
 
@@ -518,4 +765,767 @@ body{
 }
 .pane-title.is-collapsed span{
   display:none;
+}
+
+/* ✅ Modern thin scrollbar for diff surface */
+.diff-surface::-webkit-scrollbar{
+  height: 8px;   /* horizontal */
+  width: 10px;   /* vertical */
+}
+.diff-surface::-webkit-scrollbar-track{
+  background: transparent;
+}
+.diff-surface::-webkit-scrollbar-thumb{
+  background: rgba(100,116,139,.35);
+  border-radius: 999px;
+}
+.diff-surface::-webkit-scrollbar-thumb:hover{
+  background: rgba(100,116,139,.60);
+}
+
+.diff-toolbar{
+  top: 42px; /* sits under file-header (which is sticky) */
+  z-index: 25;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+
+.diff-toolbar__left{
+  display:flex;
+  gap:8px;
+}
+
+.mode-btn{
+  padding:6px 10px;
+  border:1px solid var(--border);
+  background:#fff;
+  border-radius:8px;
+  font-size:12px;
+  cursor:pointer;
+}
+.mode-btn:hover{ background:#f8fafc; }
+.mode-btn.active{
+  border-color: rgba(37,99,235,.45);
+  background: rgba(37,99,235,.10);
+  color: var(--blue);
+  font-weight:700;
+}
+
+.diff-toolbar__hint{
+  font-size:12px;
+  color: var(--muted);
+}
+
+.az-hscrollbar-row{
+  bottom: 0;
+  z-index: 30;
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  background: #fff;
+  border-top: 1px solid var(--border);
+}
+
+.az-hscroll{
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.az-hscroll.old{ border-right: 1px solid var(--border); }
+
+/* Modern thin scrollbar (Chromium/Electron) */
+.az-hscroll::-webkit-scrollbar{
+  height: 6px;
+}
+.az-hscroll::-webkit-scrollbar-track{
+  background: transparent;
+}
+.az-hscroll::-webkit-scrollbar-thumb{
+  background: rgba(100,116,139,.35);
+  border-radius: 999px;
+}
+.az-hscroll::-webkit-scrollbar-thumb:hover{
+  background: rgba(100,116,139,.60);
+}
+
+/* Firefox */
+.az-hscroll{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,116,139,.45) transparent;
+}
+
+/* Inline mode can use regular horizontal scrolling if needed */
+.diff-surface.mode-inline{
+  overflow-x: auto;
+}
+.diff-surface.mode-side,
+.diff-surface.mode-modified{
+  overflow-x: hidden; /* ensure only our two bars control horizontal */
+}
+
+/* =========================
+   Azure-like Diff View Modes + Independent Scrollbars
+   ========================= */
+
+.diff-surface{
+  --oldX: 0;
+  --newX: 0;
+  position: relative;
+  /* height:100%; */
+  overflow-y:auto;
+  overflow-x:hidden; /* side/mod use bottom bars for horizontal */
+  background:#fff;
+  display: flex;
+  flex-direction: column;  
+  min-height: 0; /* ✅ prevents overflow bugs */
+}
+
+/* Inline mode: allow horizontal scroll if needed */
+.diff-surface.mode-inline{
+  overflow-x:auto;
+}
+
+/* Toolbar */
+.diff-toolbar{
+  top: 42px; /* sits under file-header */
+  z-index: 25;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.diff-toolbar__left{ display:flex; gap:8px; }
+.mode-btn{
+  padding:6px 10px;
+  border:1px solid var(--border);
+  background:#fff;
+  border-radius:8px;
+  font-size:12px;
+  cursor:pointer;
+}
+.mode-btn:hover{ background:#f8fafc; }
+.mode-btn.active{
+  border-color: rgba(37,99,235,.45);
+  background: rgba(37,99,235,.10);
+  color: var(--blue);
+  font-weight:700;
+}
+.diff-toolbar__hint{ font-size:12px; color: var(--muted); }
+
+/* Prevent per-row horizontal scrolling */
+.cell{ overflow: hidden; }
+.code{
+  flex: 1;
+  overflow: hidden;
+  white-space: pre;
+}
+
+/* Translate code text based on independent scrollbars */
+.code-inner{
+  display:inline-block;
+  min-width: max-content;
+  transform: translateX(calc(var(--oldX) * -1px));
+}
+.cell.neu .code-inner{
+  transform: translateX(calc(var(--newX) * -1px));
+}
+
+/* Bottom scrollbar row (two separate scrollbars) */
+.az-hscrollbar-row{
+  bottom: 0;
+  z-index: 30;
+  display:grid;
+  grid-template-columns: 1fr 1fr;
+  background:#fff;
+  border-top: 1px solid var(--border);
+}
+.az-hscroll{
+  height: 14px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.az-hscroll.old{ border-right: 1px solid var(--border); }
+
+/* Thin modern scrollbar (Chromium/Electron) */
+.az-hscroll::-webkit-scrollbar{ height: 6px; }
+.az-hscroll::-webkit-scrollbar-track{ background: transparent; }
+.az-hscroll::-webkit-scrollbar-thumb{
+  background: rgba(100,116,139,.35);
+  border-radius: 999px;
+}
+.az-hscroll::-webkit-scrollbar-thumb:hover{
+  background: rgba(100,116,139,.60);
+}
+
+/* Firefox */
+.az-hscroll{
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,116,139,.45) transparent;
+}
+
+/* Inline (unified) rows */
+.inline-row{
+  display:grid;
+  grid-template-columns: 54px 54px 1fr;
+  border-bottom:1px solid #f1f3f7;
+  font-family: Consolas, "Courier New", monospace;
+  font-size:12px;
+}
+.inline-ln{
+  padding: 2px 10px;
+  text-align:right;
+  color:#9ca3af;
+  border-right:1px solid rgba(0,0,0,.06);
+  user-select:none;
+}
+.inline-code{
+  padding: 2px 10px;
+  white-space: pre;
+  overflow-x: auto; /* inline mode can scroll naturally */
+}
+.inline-marker{
+  display:inline-block;
+  width: 14px;
+  opacity: .9;
+}
+.inline-text{ display:inline; }
+
+/* =========================
+   */   FULLSCREEN DIFF MODE
+
+.workarea.fullscreen {
+  padding: 0 8px 8px 8px;
+}
+
+/* Hide side panes completely */
+.workarea.fullscreen .sidebar,
+.workarea.fullscreen .reviewpane {
+  display: none;
+}
+
+/* Expand diff fully */
+.diffpane.fullscreen {
+  flex: 1 !important;
+  width: 100% !important;
+}
+
+/* Optional: remove borders for immersive feel */
+.diffpane.fullscreen {
+  border-radius: 0;
+  border: none;
+}
+
+/* Popup */
+.ai-overlay{
+  position: fixed;
+  inset: 0;
+  background: rgba(2,6,23,.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.ai-modal{
+  width: min(1100px, 92vw);
+  height: 82vh;
+  background: #fff;
+  border-radius: 14px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(15,23,42,.18);
+  box-shadow: 0 22px 60px rgba(0,0,0,.25);
+}
+.ai-header{
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #fafbff;
+}
+.ai-title{ font-weight: 800; font-size: 16px; }
+.ai-body{
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 260px 1fr;
+}
+.ai-left{
+  border-right: 1px solid var(--border);
+  padding: 12px;
+  overflow: auto;
+}
+.ai-right{
+  padding: 12px;
+  overflow: auto;
+}
+.ai-section-title{
+  font-weight: 800;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.ai-filelist{ display:flex; flex-direction:column; gap:8px; }
+.ai-file{
+  text-align:left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: #fff;
+  cursor: pointer;
+  font-size: 12px;
+}
+.ai-file:hover{ background:#f8fafc; }
+.ai-file.active{
+  border-color: rgba(37,99,235,.45);
+  background: rgba(37,99,235,.10);
+  color: var(--blue);
+  font-weight: 700;
+}
+.ai-footer{
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  background: #fafbff;
+  display:flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+/* Highlight the selected finding in the diff */
+.finding-active{
+  outline: 2px solid rgba(99,102,241,.55);
+  background: rgba(99,102,241,.08);
+}
+
+.file-node {
+  padding: 4px 6px;
+  color: #e5e7eb;
+  cursor: pointer;
+}
+
+.file-node.active {
+  background: #1e293b;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+/* =========================
+   Azure DiffViewer Overrides (final)
+========================= */
+
+.diffpane { display: flex; flex-direction: column; min-height: 0; }
+.diff-surface.az { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; background: #fff; }
+
+/* sticky header offsets */
+.file-header { background: #fafbff; }
+.diff-toolbar {
+  position: sticky;
+  top: 42px;
+  z-index: 25;
+  background: #fff;
+  border-bottom: 1px solid rgba(15,23,42,.08);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  box-shadow: inset 0 -1px 0 rgba(15,23,42,.04);
+}
+
+/* Mode dropdown */
+.mode-dropdown-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.mode-dropdown-toggle {
+  padding: 8px 14px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: #fff;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+
+.mode-dropdown-toggle:hover {
+  background: #f8fafc;
+}
+
+.mode-dropdown-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  background: #fff;
+  border: 1px solid rgba(15,23,42,.12);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(15,23,42,.12);
+  z-index: 50;
+  min-width: 160px;
+  overflow: hidden;
+}
+
+.mode-dropdown-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background .1s ease;
+}
+
+.mode-dropdown-item:hover {
+  background: #f8fafc;
+}
+
+.mode-dropdown-item.active {
+  background: rgba(37,99,235,.1);
+  color: var(--blue);
+  font-weight: 700;
+}
+.diff-toolbar__left {
+  display: flex;
+  gap: 10px;
+}
+.diff-toolbar__right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.diff-toolbar__stats {
+  color: #475569;
+  font-size: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(15,23,42,.08);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+.diff-toolbar__badge {
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(59,130,246,0.1);
+  border: 1px solid rgba(59,130,246,0.16);
+}
+.mode-btn {
+  padding: 8px 14px;
+  border: 1px solid rgba(15,23,42,.12);
+  background: #fff;
+  border-radius: 999px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.mode-btn:hover { background: #f8fafc; }
+.mode-btn.active {
+  border-color: rgba(37,99,235,.45);
+  background: rgba(37,99,235,.10);
+  color: var(--blue);
+  font-weight: 700;
+}
+.diff-toolbar__hint { font-size: 12px; color: var(--muted); }
+
+/* proper webkit scrollbars */
+.diff-surface.az::-webkit-scrollbar { width: 10px; height: 8px; }
+.diff-surface.az::-webkit-scrollbar-thumb { background: rgba(100,116,139,.35); border-radius: 999px; }
+.diff-surface.az::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,.6); }
+
+/* inline rows */
+.inline-row { display:grid; grid-template-columns: 54px 54px 1fr; border-bottom:1px solid #eef2f7; }
+.inline-ln { padding: 2px 10px; text-align:right; color:#9ca3af; border-right:1px solid rgba(0,0,0,.06); user-select:none; }
+.inline-code { padding: 2px 10px; white-space: pre; overflow-x: auto; }
+.inline-row.add .inline-code { background: #f6ffed; border-left: 3px solid var(--green); }
+.inline-row.del .inline-code { background: #fff2f0; border-left: 3px solid var(--red); }
+.inline-row.mod .inline-code { background: #fffbe6; border-left: 3px solid var(--amber); }
+
+/* side-by-side row colors */
+.split-row.add .cell.neu { background: #f6ffed; border-left: 3px solid var(--green); }
+.split-row.del .cell.old { background: #fff2f0; border-left: 3px solid var(--red); }
+.split-row.mod .cell.old, .split-row.mod .cell.neu { background:#fffbe6; border-left: 3px solid var(--amber); }
+
+/* code translation driven by bottom scrollbars */
+.diff-surface.az { --oldX: 0; --newX: 0; }
+.code-inner { display:inline-block; min-width: max-content; transform: translateX(calc(var(--oldX) * -1px)); }
+.cell.neu .code-inner { transform: translateX(calc(var(--newX) * -1px)); }
+
+/* twin horizontal scrollbars */
+.az-hscrollbar-row { position: sticky; bottom: 0; z-index: 30; display:grid; grid-template-columns: 1fr 1fr; background:#fff; border-top:1px solid var(--border); }
+.az-hscroll { height: 14px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; scrollbar-color: rgba(100,116,139,.45) transparent; }
+.az-hscroll.old { border-right: 1px solid var(--border); }
+.az-hscroll::-webkit-scrollbar { height: 6px; }
+.az-hscroll::-webkit-scrollbar-thumb { background: rgba(100,116,139,.35); border-radius: 999px; }
+.az-hscroll::-webkit-scrollbar-thumb:hover { background: rgba(100,116,139,.6); }
+
+/* Full file panel */
+.az-fullpanel {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fbff;
+  max-width: 100%;
+  overflow: hidden;
+}
+.az-fullpanel__hdr {
+  display:flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items:center;
+}
+.az-fullpanel__pre {
+  margin-top: 10px;
+  max-height: 420px;
+  width: 100%;
+  overflow: auto;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 12px;
+  border-radius: 10px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Added file full content */
+.az-addedfile {
+  margin: 12px;
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 12px;
+  border-radius: 10px;
+  overflow: auto;
+  width: calc(100% - 24px);
+  box-sizing: border-box;
+}
+
+
+
+/* =========================
+   Azure DevOps-like File Tree (final)
+========================= */
+
+.az-tree {
+  padding: 6px 6px;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.az-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  user-select: none;
+}
+
+.az-tree-row:hover {
+  background: rgba(2, 6, 23, 0.06); /* subtle hover like Azure */
+}
+
+.az-tree-caret {
+  width: 18px;
+  opacity: 0.9;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.az-tree-icon {
+  width: 18px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.az-tree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Folder */
+.az-tree-folder {
+  font-weight: 700;
+  color: #111827;
+}
+
+/* File */
+.az-tree-file {
+  font-weight: 500;
+  color: #111827;
+  padding-left: 22px; /* visually aligns with folder children */
+}
+
+/* Selected file: Azure-like */
+.az-tree-file.active {
+  background: #1e293b;
+  color: #ffffff;
+  font-weight: 700;
+  border-left: 3px solid #3b82f6;
+}
+
+/* Ensure nested indentation doesn't break alignment */
+.az-tree-indent {
+  margin-left: 14px;
+}
+
+/* Badges tighter like Azure */
+.az-tree-badge {
+  margin-left: 6px;
+  flex: 0 0 auto;
+}
+
+/* Make existing .badge look more Azure-like (optional tweak) */
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+/* =========================
+   Diff Truncated Badge (Enterprise)
+========================= */
+
+/* Base badge */
+.diff-truncated-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+
+  background: rgba(245, 158, 11, 0.12);   /* amber soft */
+  color: #b45309;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+
+  cursor: default;
+  white-space: nowrap;
+}
+
+/* Icon */
+.diff-truncated-badge::before {
+  content: "⚠";
+  font-size: 12px;
+  opacity: 0.9;
+}
+
+/* Hover (subtle enterprise feel) */
+.diff-truncated-badge:hover {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+/* ✅ Animated pulse (optional but looks premium) */
+@keyframes diffPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.4);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(245, 158, 11, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+.diff-truncated-badge.pulse {
+  animation: diffPulse 2s infinite;
+}
+
+/* =========================
+   Full-Screen Modal (Pro View)
+========================= */
+
+.fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2,6,23,.9);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+
+.fullscreen-container {
+  width: 95vw;
+  height: 95vh;
+  background: linear-gradient(180deg, #ffffff, #fbfdff);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(2,6,23,.8);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid rgba(30,41,59,.1);
+  overflow: hidden;
+}
+
+.fullscreen-header {
+  padding: 18px 24px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(15,23,42,.08);
+  background: #fafbff;
+  flex-shrink: 0;
+}
+
+.fullscreen-title {
+  font-size: 18px;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.fullscreen-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.fullscreen-pre {
+  background: #f8fafc;
+  color: #0f172a;
+  padding: 16px;
+  border-radius: 10px;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-height: 100%;
+}
+
+/* Error container with retry button */
+.error-container {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.error-container .btn {
+  min-width: 120px;
 }

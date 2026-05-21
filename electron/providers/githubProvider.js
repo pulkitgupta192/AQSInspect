@@ -85,7 +85,7 @@ async function getPullRequestDetails({ prUrlOrId, repoSettings }) {
   // Accept numeric id or full URL
   let number = prUrlOrId;
   if (typeof prUrlOrId === "string" && prUrlOrId.includes("/pull/")) {
-    const m = prUrlOrId.match(/\/pull\/(\\d+)/);
+    const m = prUrlOrId.match(/\/pull\/(\d+)/);
     if (m) number = m[1];
   }
   if (!number) throw new Error("PR id/url invalid.");

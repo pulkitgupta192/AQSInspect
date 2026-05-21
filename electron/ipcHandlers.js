@@ -141,6 +141,38 @@ function validateLLM(llm) {
   return null;
 }
 
+function getAxiosErrorMessage(error) {
+  if (!error) return "Unknown network error";
+  if (error.response?.data?.error?.message) return String(error.response.data.error.message);
+  if (error.response?.data?.message) return String(error.response.data.message);
+  if (error.message) return String(error.message);
+  return String(error);
+}
+
+async function postWithRetry(url, body, headers, attempts = 3, initialDelay = 600) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      return await axios.post(url, body, { headers });
+    } catch (e) {
+      const status = e?.response?.status;
+      const msg = getAxiosErrorMessage(e);
+      const shouldRetry = status === 429 || status === 502 || status === 503 || status === 504;
+
+      lastError = new Error(`LLM request failed (${status || "unknown"}): ${msg}`);
+
+      if (shouldRetry && attempt < attempts) {
+        const delay = initialDelay * attempt;
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        continue;
+      }
+
+      throw lastError;
+    }
+  }
+  throw lastError;
+}
+
 // -----------------------------
 // IPC: App
 // -----------------------------
@@ -337,7 +369,7 @@ async function azureGetItemText({ apiRoot, path, commitId, apiVersion, headers }
 }
 
 // Minimal Myers diff for line arrays -> operations
-function myersOps(aLines, bLines, maxTotalLines = 6000) {
+function myersOps(aLines, bLines, maxTotalLines = 20000) {
   const a = Array.isArray(aLines) ? aLines : [];
   const b = Array.isArray(bLines) ? bLines : [];
 
@@ -750,19 +782,23 @@ ipcMain.handle("review:run", async (_evt, payload) => {
   const unifiedDiff = payload?.unifiedDiff || "";
   if (!unifiedDiff) throw new Error("No diff provided for AI review.");
 
-  const system = "You are an expert IFS AQS code reviewer. Output MUST be JSON only.";
+  // Improved system + user prompts for higher-quality, file-scoped reasoning
+  const system = `You are an expert senior software engineer and AQS reviewer with deep knowledge of SQL/Oracle, IFS Applications and integration patterns. Always reason about security, performance, and maintainability. Where applicable, reference IFS documentation patterns and database best practices. Output MUST be JSON only.`;
+
   const user = `
-Return JSON ONLY in this schema:
+Return JSON ONLY with this schema:
 {
   "score": number (0-100),
   "severity": "LOW" | "MEDIUM" | "HIGH",
   "confidence": number (0-1),
   "findings": [
-    { "title": string, "explanation": string, "filename": string, "matchText": string }
-  ]
+    { "title": string, "explanation": string, "filename": string, "matchText": string, "line": number }
+  ],
+  "fileReasoning": { "<filename>": "detailed reasoning text for the file" }
 }
 
-Analyze this diff with IFS AQS mindset (IFS Apps8/9/10 and IFS Cloud, Aurena safe patterns):
+Provide per-file reasoning in 'fileReasoning' keyed by filename. For each finding, include the most-specific 'matchText' and an optional 'line' number if available. Use docs.ifs.com as primary guidance for IFS-specific recommendations when applicable. Analyze DIFF context below and synthesize findings per-file.
+
 DIFF:
 ${unifiedDiff}
 `;
@@ -794,7 +830,7 @@ ${unifiedDiff}
     body = { messages, temperature };
   }
 
-  const res = await axios.post(url, body, { headers });
+  const res = await postWithRetry(url, body, headers, 3, 750);
 
   const content = res?.data?.choices?.[0]?.message?.content || "";
   const parsed = extractJson(content);
@@ -818,4 +854,226 @@ ${unifiedDiff}
   }
 
   return parsed;
+});
+
+// -----------------------------
+// IPC: Generate Auto-Fix for a single finding (Azure/OpenAI)
+// -----------------------------
+ipcMain.handle("fix:generate", async (_evt, payload) => {
+  const llm = getLLMConfigSafe();
+  const err = validateLLM(llm);
+  if (err) throw new Error(err);
+
+  const provider = (llm.provider || "azure").toLowerCase();
+  const temperature = typeof llm.temperature === "number" ? llm.temperature : 0.1;
+
+  const filename = payload?.filename || "";
+  const matchText = payload?.matchText || "";
+  const title = payload?.title || "";
+  const explanation = payload?.explanation || "";
+  const filePatch = payload?.filePatch || "";       // the selected file's patch (preferred)
+  const unifiedDiff = payload?.unifiedDiff || "";   // fallback context if needed
+
+  if (!filename) throw new Error("filename is required");
+  if (!filePatch && !unifiedDiff) throw new Error("No diff context provided");
+
+  const system =
+    "You are an expert IFS AQS code reviewer and fixer. Output MUST be JSON only. " +
+    "Do not include markdown fences. Provide minimal, safe changes.";
+
+  const user = `
+Return JSON ONLY in this schema:
+{
+  "suggestedFix": string,
+  "fixPatch": string,          // unified diff patch for the SAME file; may be empty if not possible safely
+  "confidence": number (0-1),
+  "notes": string              // any caveats or prerequisites
+}
+
+Context:
+- File: ${filename}
+- Finding title: ${title}
+- Finding explanation: ${explanation}
+- Match text (if any): ${matchText}
+
+Diff context (prefer filePatch):
+${filePatch || unifiedDiff}
+
+Rules:
+- Keep changes minimal and scoped.
+- If you cannot safely generate a patch, return fixPatch as "" but still provide suggestedFix.
+- Patch MUST be unified diff for this exact file path if provided.
+`;
+
+  const messages = [
+    { role: "system", content: system },
+    { role: "user", content: user },
+  ];
+
+  let url, headers, body;
+  if (provider === "openai") {
+    url = "https://api.openai.com/v1/chat/completions";
+    headers = { Authorization: `Bearer ${llm.apiKey}`, "Content-Type": "application/json" };
+    body = { model: llm.model, messages, temperature };
+  } else {
+    const endpoint = String(llm.endpoint).replace(/\/$/, "");
+    const apiVersion = llm.apiVersion || "2024-02-15-preview";
+    url = `${endpoint}/openai/deployments/${llm.model}/chat/completions?api-version=${apiVersion}`;
+    headers = { "api-key": llm.apiKey, "Content-Type": "application/json" };
+    body = { messages, temperature };
+  }
+
+  const res = await axios.post(url, body, { headers });
+  const content = res?.data?.choices?.[0]?.message?.content || "";
+  const parsed = extractJson(content);
+
+  if (!parsed) {
+    return {
+      suggestedFix: "Unable to generate a structured fix. Try again or reduce diff size.",
+      fixPatch: "",
+      confidence: 0.2,
+      notes: "LLM returned non-JSON output",
+      raw: content,
+    };
+  }
+
+  // ensure keys exist
+  return {
+    suggestedFix: String(parsed.suggestedFix || ""),
+    fixPatch: String(parsed.fixPatch || ""),
+    confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+    notes: String(parsed.notes || ""),
+  };
+});
+
+// =============================// ================= Full File Content (GitHub + Azure DevOps)
+// Exposes renderer API: window.api.getFileContent({ filename, side, repoType, prUrl, selectedPrId })
+// side: "new" (latest/head) | "old" (base)
+// =============================
+ipcMain.handle("file:getContent", async (_evt, payload) => {
+  const cfg = store.getConfig ? store.getConfig() : readConfigFile();
+
+  const filename = String(payload?.filename || "").trim();
+  const side = String(payload?.side || "new").toLowerCase(); // "new" | "old"
+  const prUrl = String(payload?.prUrl || payload?.selectedPrId || "").trim();
+  const repoTypeFromUi = String(payload?.repoType || "").toLowerCase();
+
+  if (!filename) throw new Error("filename is required");
+  if (!prUrl) throw new Error("prUrl (or selectedPrId) is required");
+
+  // Infer repo type if not provided
+  const inferredRepoType = isAzureDevOpsPrUrl(prUrl) ? "azure" : "github";
+  const repoType = repoTypeFromUi || cfg?.repoType || inferredRepoType;
+
+  // -------------------------
+  // Azure DevOps
+  // -------------------------
+  if (repoType === "azure") {
+    const a = cfg?.azure || {};
+    const org = a.org;
+    const project = a.project;
+    const repoIdOrName = a.repoIdOrName;
+    const pat = a.pat;
+    const apiVersion = a.apiVersion || "7.1";
+
+    if (!org || !project || !repoIdOrName || !pat) {
+      throw new Error("Azure DevOps settings are incomplete (org/project/repo/PAT required).");
+    }
+
+    const prId = parseAzurePullRequestId(prUrl);
+    if (!prId) throw new Error("Azure PR ID not found in URL");
+
+    const baseUrlRaw = String(a.baseUrl || "https://dev.azure.com").trim().replace(/\/+$/, "");
+    const orgRoot = baseUrlRaw.toLowerCase().endsWith("/" + org.toLowerCase())
+      ? baseUrlRaw
+      : `${baseUrlRaw}/${encodeURIComponent(org)}`;
+
+    const apiRoot = `${orgRoot}/${encodeURIComponent(project)}/_apis/git/repositories/${encodeURIComponent(repoIdOrName)}`;
+
+    const headers = {
+      Authorization: azureAuthHeaderFromPat(pat),
+      Accept: "application/json",
+    };
+
+    // PR details to get commit ids
+    const prApiUrl = `${apiRoot}/pullRequests/${encodeURIComponent(prId)}?api-version=${encodeURIComponent(apiVersion)}`;
+    const pr = await azureGetJson(prApiUrl, headers);
+
+    const baseCommit =
+      pr?.lastMergeTargetCommit?.commitId || pr?.lastMergeCommit?.commitId;
+    const headCommit =
+      pr?.lastMergeSourceCommit?.commitId || pr?.lastMergeCommit?.commitId;
+
+    if (!baseCommit || !headCommit) {
+      throw new Error("Unable to determine PR base/head commits from Azure DevOps response.");
+    }
+
+    const commitId = side === "old" ? baseCommit : headCommit;
+
+    // Azure items API path must start with '/'
+    const path = filename.startsWith("/") ? filename : `/${filename}`;
+
+    const text = await azureGetItemText({
+      apiRoot,
+      path,
+      commitId,
+      apiVersion,
+      headers,
+    });
+
+    return text || "";
+  }
+
+  // -------------------------
+  // GitHub
+  // -------------------------
+  {
+    // Token + repo info
+    const t = normalizeToken(payload?.token || cfg?.githubToken || cfg?.github?.token);
+    if (!t) throw new Error("GitHub Token is missing. Please configure it in Settings.");
+
+    // Parse PR URL to get owner/repo/pr#
+    const { owner, repo, pull_number, apiBase } = parsePullRequestUrl(prUrl);
+
+    // Fetch PR details to get head/base SHA
+    const prApi = `${apiBase}/repos/${owner}/${repo}/pulls/${pull_number}`;
+    const prRes = await axios.get(prApi, {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "AQSInspect",
+      },
+    });
+    const pr = prRes.data;
+
+    const baseSha = pr?.base?.sha;
+    const headSha = pr?.head?.sha;
+
+    if (!baseSha || !headSha) throw new Error("Unable to determine PR base/head SHA from GitHub response.");
+
+    const ref = side === "old" ? baseSha : headSha;
+
+    // GitHub contents API needs URL-encoded path
+    const encodedPath = encodeURIComponent(filename).replace(/%2F/g, "/");
+    const contentUrl = `${apiBase}/repos/${owner}/${repo}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`;
+
+    const contentRes = await axios.get(contentUrl, {
+      headers: {
+        Authorization: `Bearer ${t}`,
+        Accept: "application/vnd.github+json",
+        "User-Agent": "AQSInspect",
+      },
+    });
+
+    const data = contentRes.data;
+
+    // If it's a file, GitHub returns base64 content
+    if (data && data.type === "file" && data.content) {
+      const buff = Buffer.from(String(data.content).replace(/\n/g, ""), "base64");
+      return buff.toString("utf8");
+    }
+
+    // If GitHub returns something else (e.g. directory)
+    throw new Error("GitHub returned non-file content (path may be a directory or missing).");
+  }
 });

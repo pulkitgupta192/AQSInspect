@@ -1,7 +1,24 @@
 const { app, BrowserWindow } = require("electron");
 const path = require("path");
+const fs = require("fs");
 
-// ✅ THIS IS THE MISSING PIECE
+// Avoid GPU / cache permission issues in restricted environments
+try {
+  app.commandLine.appendSwitch('disable-gpu');
+  app.disableHardwareAcceleration();
+} catch (e) {
+  console.warn('Could not disable GPU acceleration:', e && e.message);
+}
+
+// Ensure userData path exists to avoid "Access is denied" on some systems
+try {
+  const userDataPath = app.getPath('userData');
+  fs.mkdirSync(userDataPath, { recursive: true });
+} catch (e) {
+  console.warn('Failed to ensure userData directory exists:', e && e.message);
+}
+
+// Load IPC handlers after ensuring storage paths exist
 require("./ipcHandlers");
 
 function createWindow() {
